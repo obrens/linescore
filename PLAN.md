@@ -1,149 +1,118 @@
-# Plan: New backends + new scoring checks
+# Plan: Scoring improvements, summary output, multi-check defaults
 
 ## Context
 
-Linescore currently has one backend (Claude Code subprocess) and one scoring check (line→function). The user wants:
-- **Three backend plugins**: Claude Code (existing), Anthropic API (direct SDK), llama-cpp-python (local, free)
-- **Three scoring checks**: line→function (existing), function/class name→file (new), file/folder→parent folder (new)
+Linescore v0.2 has three backends and three checks working. Four improvements are needed before the tool produces meaningful, comparable results:
 
-The current architecture mixes "how to call an LLM" and "what to ask it" inside `ClaudeCodeJudge`. We need to separate these concerns.
+1. **Scoring favors modules with fewer functions** — A file with 2 functions gets 50% from random guessing; one with 10 functions gets 10%. Raw accuracy is not comparable across targets.
+2. **No summary at the end** — Multi-file runs print per-file reports but no aggregate view.
+3. **Only one check runs at a time** — Users must manually specify `--check` three times to get the full picture.
+4. **No reference scores** — Users have no baseline to know if 75% is good or bad.
 
-## Architecture
+## Step 1: Chance-adjusted scoring
 
-**Backends** = how to call an LLM. Protocol: `complete(prompt: str) -> str`. Returns raw text.
-- `backends/claude_code.py` — subprocess to `claude` CLI (extracted from existing judge)
-- `backends/anthropic.py` — `anthropic` Python SDK
-- `backends/llamacpp.py` — `llama_cpp` Python bindings (in-process, no server)
+**Problem**: Raw accuracy = `correct / total`. Random baseline = `1/k` where k = number of categories. A 75% score with 2 functions (baseline 50%) is less impressive than 75% with 10 functions (baseline 10%).
 
-**Checks** = what to score. Protocol: `extract(target) -> list[ClassificationTask]` + `build_prompt(candidates, item) -> str`.
-- `checks/line_to_function.py` — given a source file, can the LLM guess which function a code line belongs to?
-- `checks/name_to_file.py` — given a directory of files, can the LLM guess which file a function/class name belongs to?
-- `checks/file_to_folder.py` — given a directory tree, can the LLM guess which folder a file/subfolder belongs to?
+**Formula**: `adjusted = (raw - 1/k) / (1 - 1/k)`
+- Normalizes to 0.0 = random guessing, 1.0 = perfect, negative = worse than random
+- Well-known (Cohen's kappa simplification for uniform prior)
 
-**Scorer** = orchestration. Takes a check + backend + target, dispatches in parallel, aggregates results.
+**Changes**:
 
+`linescore/models.py`:
+- `ScoreResult`: add `adjusted_score: float`, `chance_level: float`, `num_categories: int`
 
-## Models
+`linescore/scorer.py` — `_build_result()`:
+- Compute `k = len(candidates_set)`, `chance = 1/k`, `adjusted = (raw - chance) / (1 - chance)`
+- Pass to ScoreResult constructor
 
-Rename existing models to be generic (this is v0.1 with no external users, so no compat concern):
+`linescore/reporting.py` — `format_text_report()`:
+- Header line: show adjusted score as primary, raw in parentheses
+  - `SCORE: 66.7% adjusted  (75.0% raw, 3/4, chance=50.0%)`
 
-| Current | New | Why |
-|---------|-----|-----|
-| `LineResult` | `GuessResult` | Works for any check, not just lines |
-| `FunctionScore` | `CategoryScore` | Categories = functions, files, or folders |
-| `ModuleResult` | `ScoreResult` | Not always scoring a "module" |
-| `ConfusedPair` | stays `ConfusedPair` | Already generic enough |
-| `FunctionInfo` | stays `FunctionInfo` | Parser-specific, not used by new checks |
-| `JudgmentResult` | stays `JudgmentResult` | Already generic (guess + confidence) |
+`linescore/reporting.py` — `format_json()`:
+- `adjusted_score`, `chance_level`, `num_categories` included automatically via `asdict`
 
-Add:
-```python
-@dataclass
-class ClassificationTask:
-    item: str           # thing to classify (a statement, a name, a filename)
-    actual: str         # correct category
-    candidates: list[str]  # all possible categories
+**Files**: `models.py`, `scorer.py`, `reporting.py`, `tests/test_scorer.py`, `tests/test_reporting.py`
+
+## Step 2: Run all checks by default
+
+**Problem**: Users must run `--check line-to-function`, then `--check name-to-file`, then `--check file-to-folder` separately.
+
+**Design**: `--check` accepts `"all"` (new default), which runs every applicable check:
+- **line-to-function**: runs once per source file (target = file contents)
+- **name-to-file**: runs once per directory input (target = directory path)
+- **file-to-folder**: runs once per directory input (target = directory path)
+
+When a single file is passed, only line-to-function applies. When a directory is passed, all three apply (line-to-function runs per source file found in the directory).
+
+**Changes**:
+
+`linescore/cli.py`:
+- `--check` choices: add `"all"`, make it the default
+- New `_plan_runs()` function returns `list[tuple[str, Check, str, str]]` — `(check_name, check_instance, label, target)`:
+  - For each file path: one `line-to-function` run
+  - For each directory path: one `line-to-function` per source file + one `name-to-file` + one `file-to-folder`
+  - When `--check` is specific (not `"all"`): filter to just that check
+- Main loop iterates over `_plan_runs()` output instead of the current hardcoded if/else
+
+**Files**: `cli.py`
+
+## Step 3: Summary at end of multi-target runs
+
+**Problem**: When scoring multiple files/directories, the user sees per-target reports scroll by with no aggregate view.
+
+**Design**: After all runs complete, print a summary table + overall score.
+
+**Changes**:
+
+`linescore/reporting.py` — new `format_text_summary()`:
 ```
-
-`ScoreResult` gets a `check: str` field ("line-to-function", "name-to-file", "file-to-folder") so reporting knows what labels to use.
-
-## File structure after implementation
-
+============================================================
+  SUMMARY: 3 targets, 2 checks
+============================================================
+  Check              Target               Adjusted   Raw
+  line-to-function   email.py             44.4%      66.7%
+  line-to-function   api.py               88.9%      90.0%
+  name-to-file       src/                 75.0%      87.5%
+------------------------------------------------------------
+  Overall (adjusted):  69.4%
+============================================================
 ```
-linescore/
-    __init__.py              # update exports
-    __main__.py              # unchanged
-    models.py                # rename LineResult→GuessResult etc, add ClassificationTask
-    scorer.py                # add generic score(), keep score_module() as wrapper
-    reporting.py             # adapt to generic model names
-    cli.py                   # add --check, --backend, --model flags
-    parsers/
-        __init__.py          # unchanged
-        python.py            # unchanged
-    judges/
-        __init__.py          # unchanged (backward compat)
-        claude_code.py       # unchanged (backward compat)
-    backends/
-        __init__.py          # Backend protocol + shared parse_judgment_json()
-        claude_code.py       # extracted subprocess logic
-        anthropic.py         # anthropic SDK
-        llamacpp.py          # llama-cpp-python
-    checks/
-        __init__.py          # Check protocol + ClassificationTask
-        line_to_function.py  # uses PythonParser, existing prompt
-        name_to_file.py      # AST extraction of names across files
-        file_to_folder.py    # directory tree walking
-tests/
-    test_backends.py         # test response parsing, mock subprocess/API/llama
-    test_check_line_to_function.py   # extraction + prompt building
-    test_check_name_to_file.py       # extraction from temp directory
-    test_check_file_to_folder.py     # extraction from temp directory
-    test_scorer.py           # update for renamed models, add generic score() tests
-    test_parser_python.py    # update imports for renamed models
-    test_reporting.py        # update for renamed models
-    test_judge_claude_code.py # keep as-is (backward compat)
-```
+- Input: `list[tuple[str, str, ScoreResult]]` — `(check_name, label, result)`
+- Overall adjusted score: mean of per-run adjusted scores (each run already normalized for its k)
 
-## Implementation steps
+`linescore/cli.py`:
+- Collect all `(check_name, label, result)` triples during the main loop
+- After the loop, if `len(all_results) > 1` and not `--json`, call `format_text_summary()`
+- JSON mode: already outputs a list of all results (no change needed, `adjusted_score` will be in there from step 1)
 
-### 1. Rename models + update all references
-- `models.py`: `LineResult`→`GuessResult`, `FunctionScore`→`CategoryScore`, `ModuleResult`→`ScoreResult`
-- Update `scorer.py`, `reporting.py`, `cli.py`, `__init__.py`, all tests
-- All 34 tests must still pass after rename
+**Files**: `reporting.py`, `cli.py`, `tests/test_reporting.py`
 
-### 2. Add `backends/` package
-- `backends/__init__.py`: `Backend` protocol + `parse_judgment_json()` (extracted from `ClaudeCodeJudge._parse_response`)
-- `backends/claude_code.py`: subprocess to `claude` CLI, calls `parse_judgment_json`
-- `backends/anthropic.py`: uses `anthropic` SDK (Anthropic client, messages.create)
-- `backends/llamacpp.py`: uses `llama_cpp.Llama` for in-process inference
-- Tests: mock subprocess/SDK/Llama, verify prompt passthrough and response parsing
+## Step 4: Reference scores / benchmarking (design only)
 
-### 3. Add `checks/` package
-- `checks/__init__.py`: `Check` protocol, `ClassificationTask` dataclass
-- `checks/line_to_function.py`: takes source string, uses `PythonParser`, builds line→function prompt
-- `checks/name_to_file.py`: takes directory path, walks .py files, extracts function/class names via AST, builds name→file prompt
-- `checks/file_to_folder.py`: takes directory path, walks tree, builds file→folder prompt
-- Tests: verify extraction produces correct tasks from known inputs
+This is a larger effort. For now, just lay the groundwork:
 
-### 4. Add generic `score()` function to `scorer.py`
-```python
-def score(
-    check: Check,
-    backend: Backend,
-    target: str | Path,
-    max_items: int | None = None,
-    workers: int = 10,
-    on_result: Callable | None = None,
-) -> ScoreResult:
-```
-- Keep existing `score_module()` as backward-compat wrapper
-- Tests: use FakeBackend with each check type
+`linescore/cli.py` — add `linescore benchmark` subcommand:
+- Ships with a list of ~5 well-known open source Python repos (e.g., `requests`, `flask`, `black`, `httpx`, `fastapi`)
+- Clones them to a temp dir, runs all checks, prints a comparison table
+- Stores results in `~/.linescore/benchmarks/` as JSON for future comparison
 
-### 5. Update reporting for generic models
-- `format_text_report()` and `format_json()` work with renamed `ScoreResult`
-- Section headers adapt based on `result.check` field
+This step is **design-only in this plan** — implement the subcommand skeleton and the repo list, but the actual benchmarking infrastructure (cloning, caching, comparison UI) is a follow-up. The main deliverable is steps 1-3.
 
-### 6. Update CLI
-- Add `--check` flag: `line-to-function` (default), `name-to-file`, `file-to-folder`
-- Add `--backend` flag: `claude-code` (default), `anthropic`, `llamacpp`
-- Add `--model` flag: model name for the chosen backend
-- Wire up: instantiate check + backend based on flags, call `score()`
+## Implementation order
 
-### 7. Update pyproject.toml
-```toml
-[project.optional-dependencies]
-anthropic = ["anthropic>=0.39.0"]
-llamacpp = ["llama-cpp-python>=0.3.0"]
-all = ["anthropic>=0.39.0", "llama-cpp-python>=0.3.0"]
-```
-
-### 8. Update DECISIONS.md
-Record all new design decisions.
+1. Chance-adjusted scoring (models + scorer + reporting + tests)
+2. Multi-check `--check all` (CLI restructuring)
+3. Summary output (reporting + CLI)
+4. Benchmark skeleton (CLI only, optional/stretch)
 
 ## Verification
-- All existing tests pass after model rename (step 1)
-- New backend tests pass with mocks (step 2)
-- New check tests pass with temp directories (step 3)
-- Generic scorer tests pass with fake backend (step 4)
-- `linescore --help` shows new flags (step 6)
-- Smoke test: `linescore --check name-to-file --backend llamacpp --model <local-model> src/` runs end-to-end
+
+- All existing 64 tests pass after each step
+- New tests for adjusted scoring: verify formula with known k values (k=2: 75% raw -> 50% adjusted; k=5: 40% raw -> 25% adjusted)
+- `linescore --help` shows `all` as default for `--check`
+- `linescore .` runs all three checks on the current directory
+- `linescore somefile.py` runs only line-to-function
+- Summary appears at the end of multi-target runs
+- JSON output includes `adjusted_score`, `chance_level`, `num_categories`

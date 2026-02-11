@@ -17,4 +17,3 @@ Notes for me so I don't forget what to tell you next:
 * The output needs to have a summary at the end.
 * By default, all three checks should be performed on the specified scope if applicable.
 * We will need to add statistics and analyze various open source repos, so that we can give people reference scores.
-* The program breaks the terminal, writing is not visible in the terminal after the program is run.
