@@ -1,13 +1,84 @@
 """CLI for linescore — thin consumer of the library."""
 
+import subprocess
 import argparse
 import sys
 from pathlib import Path
 
-from linescore import score_module, ModuleResult
-from linescore.parsers.python import PythonParser
-from linescore.judges.claude_code import ClaudeCodeJudge
+from linescore.scorer import score
+from linescore.backends import Backend
+from linescore.checks import Check
 from linescore.reporting import format_text_report, format_json
+
+
+_INSTALLABLE_BACKENDS = {
+    "anthropic": ["anthropic>=0.39.0"],
+    "llamacpp": ["llama-cpp-python>=0.3.0", "huggingface-hub>=0.20.0"],
+}
+
+
+def _handle_install(args: list[str]):
+    if not args:
+        print("Usage: linescore install <backend>")
+        print(f"Available: {', '.join(_INSTALLABLE_BACKENDS)}")
+        sys.exit(1)
+
+    name = args[0]
+    if name not in _INSTALLABLE_BACKENDS:
+        print(f"Unknown backend: {name}")
+        print(f"Available: {', '.join(_INSTALLABLE_BACKENDS)}")
+        sys.exit(1)
+
+    packages = _INSTALLABLE_BACKENDS[name]
+    print(f"Installing {name} backend...")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", *packages],
+        capture_output=False,
+        cwd="/",
+    )
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+    # Download default model for llamacpp
+    if name == "llamacpp":
+        result = subprocess.run(
+            [sys.executable, "-c", "from linescore.backends.llamacpp import download_default_model; download_default_model()"],
+            cwd="/",
+        )
+        if result.returncode != 0:
+            sys.exit(result.returncode)
+
+    print(f"\n{name} backend installed. Use it with: linescore --backend {name}")
+
+
+def _make_check(name: str) -> Check:
+    if name == "line-to-function":
+        from linescore.checks.line_to_function import LineToFunctionCheck
+        return LineToFunctionCheck()
+    elif name == "name-to-file":
+        from linescore.checks.name_to_file import NameToFileCheck
+        return NameToFileCheck()
+    elif name == "file-to-folder":
+        from linescore.checks.file_to_folder import FileToFolderCheck
+        return FileToFolderCheck()
+    else:
+        print(f"Unknown check: {name}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _make_backend(name: str, model: str | None) -> Backend:
+    if name == "claude-code":
+        from linescore.backends.claude_code import ClaudeCodeBackend
+        return ClaudeCodeBackend(model=model) if model else ClaudeCodeBackend()
+    elif name == "anthropic":
+        from linescore.backends.anthropic import AnthropicBackend
+        return AnthropicBackend(model=model) if model else AnthropicBackend()
+    elif name == "llamacpp":
+        from linescore.backends.llamacpp import LlamaCppBackend
+        return LlamaCppBackend(model_path=model)
+    else:
+        print(f"Unknown backend: {name}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _collect_python_files(paths: list[str]) -> list[Path]:
@@ -36,14 +107,38 @@ def _verbose_callback(result, completed, total):
 
 
 def main():
+    # Handle `linescore install <backend>` before argparse
+    if len(sys.argv) > 1 and sys.argv[1] == "install":
+        _handle_install(sys.argv[2:])
+        return
+
     parser = argparse.ArgumentParser(
         prog="linescore",
-        description="Score code quality by line identifiability.",
+        description="Score code quality via AI classification checks.\n\n"
+                    "To install optional backends: linescore install <anthropic|llamacpp>",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "paths",
         nargs="+",
-        help="Python files or directories to analyze",
+        help="Files or directories to analyze",
+    )
+    parser.add_argument(
+        "--check",
+        choices=["line-to-function", "name-to-file", "file-to-folder"],
+        default="line-to-function",
+        help="Which check to run (default: line-to-function)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["claude-code", "anthropic", "llamacpp"],
+        default="claude-code",
+        help="LLM backend to use (default: claude-code)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name/path for the backend (default depends on backend)",
     )
     parser.add_argument(
         "--json",
@@ -52,10 +147,10 @@ def main():
         help="Output results as JSON",
     )
     parser.add_argument(
-        "-n", "--max-statements",
+        "-n", "--max-items",
         type=int,
         default=None,
-        help="Max statements to sample per file (limits API calls)",
+        help="Max items to sample per target (limits API calls)",
     )
     parser.add_argument(
         "-w", "--workers",
@@ -66,31 +161,37 @@ def main():
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="Print each line judgment as it completes",
+        help="Print each judgment as it completes",
     )
     args = parser.parse_args()
 
-    files = _collect_python_files(args.paths)
-    if not files:
-        print("No Python files found.", file=sys.stderr)
-        sys.exit(1)
-
-    py_parser = PythonParser()
-    judge = ClaudeCodeJudge()
+    check = _make_check(args.check)
+    backend = _make_backend(args.backend, args.model)
     callback = _verbose_callback if args.verbose else None
 
-    all_results: list[tuple[str, ModuleResult]] = []
+    # For line-to-function, targets are source code strings (read from files).
+    # For name-to-file and file-to-folder, targets are directory paths.
+    if args.check == "line-to-function":
+        files = _collect_python_files(args.paths)
+        if not files:
+            print("No Python files found.", file=sys.stderr)
+            sys.exit(1)
+        targets = [(str(f), f.read_text()) for f in files]
+    else:
+        # Directory-based checks: paths are directories
+        targets = [(p, p) for p in args.paths]
 
-    for file_path in files:
-        source = file_path.read_text()
-        print(f"Analyzing: {file_path}")
+    all_results = []
+
+    for label, target in targets:
+        print(f"Analyzing: {label}")
 
         try:
-            result = score_module(
-                source=source,
-                parser=py_parser,
-                judge=judge,
-                max_statements=args.max_statements,
+            result = score(
+                check=check,
+                backend=backend,
+                target=target,
+                max_items=args.max_items,
                 workers=args.workers,
                 on_result=callback,
             )
@@ -98,19 +199,18 @@ def main():
             print(f"  Skipping: {e}", file=sys.stderr)
             continue
 
-        all_results.append((str(file_path), result))
+        all_results.append((label, result))
 
         if not args.output_json:
-            print(format_text_report(result, str(file_path)))
+            print(format_text_report(result, label))
 
     if args.output_json:
         import json
-        output = []
-        for file_path, result in all_results:
-            from dataclasses import asdict
-            data = asdict(result)
-            data["file"] = file_path
-            output.append(data)
+        from dataclasses import asdict
+        output = [
+            {**asdict(result), "file": label}
+            for label, result in all_results
+        ]
         print(json.dumps(output, indent=2))
 
 

@@ -6,8 +6,25 @@
 ## Architecture
 
 ### Library-first design
-- The scoring engine is the product. CLI, CI plugins, IDE extensions are consumers.
-- Public API: `from linescore import score_module, PythonParser, ClaudeCodeJudge`
+- The scoring engine is the product. CLI/CI/IDE extensions are consumers.
+- Public API: `from linescore import score, Backend, Check` + dataclasses.
+
+### Backends + Checks separation
+- **Backends** = how to call an LLM. Protocol: `complete(prompt: str) -> str`.
+  - `ClaudeCodeBackend`: subprocess to `claude` CLI.
+  - `AnthropicBackend`: Anthropic Python SDK (messages API).
+  - `LlamaCppBackend`: llama-cpp-python bindings (local, in-process).
+- **Checks** = what to score. Protocol: `extract(target) -> list[ClassificationTask]` + `build_prompt(candidates, item) -> str`.
+  - `LineToFunctionCheck`: can the LLM guess which function a line belongs to?
+  - `NameToFileCheck`: can the LLM guess which file a function/class name belongs to?
+  - `FileToFolderCheck`: can the LLM guess which folder a file/subfolder belongs to?
+- This separation means adding a new LLM provider or a new scoring check requires no changes to existing code.
+
+### No backward compatibility
+- We don't care about backward compat unless explicitly told to. The old `judges/` package and `score_module()` function were removed in favor of the cleaner `backends/` + `checks/` + `score()` architecture.
+
+### Parsers are internal
+- `parsers/` is an internal package used by `LineToFunctionCheck`. Not part of the public API. The `Parser` protocol was removed from exports.
 
 ### `cli.py` lives inside `linescore/` package
 - It's convenient and idiomatic to have it in the package directory.
@@ -17,29 +34,40 @@
 - Also runnable via `python -m linescore` (via `__main__.py`).
 
 ### Reporting lives in the library
-- Initially planned as consumer-only concern, but user pointed out that forcing every consumer to write their own reporting is too much friction.
 - `linescore/reporting.py` provides `format_text_report()` and `format_json()` as convenience formatters.
-- Consumers can still format `ModuleResult` however they want — the formatters are optional.
+- Consumers can still format `ScoreResult` however they want — the formatters are optional.
 
-### Pluggable parsers and judges via Protocol
-- `Parser` protocol: `extract_functions(source: str) -> list[FunctionInfo]`
-- `Judge` protocol: `judge(function_names: list[str], statement: str) -> JudgmentResult`
-- What goes into the prompt (names only vs signatures) is the parser's decision, not the scorer's. If someone wants signatures, they implement their own parser.
+### Pluggable backends and checks via Protocol
+- `Backend` protocol: `complete(prompt: str) -> str`
+- `Check` protocol: `extract(target) -> list[ClassificationTask]` + `build_prompt(candidates, item) -> str`
+- `parse_judgment_json()` is shared by all backends — it lives in `backends/__init__.py` and the scorer calls it after getting raw text from the backend.
 
 ### Parallelism
-- The library owns parallelism (thread pool in `score_module()`).
+- The library owns parallelism (thread pool in `score()`).
 - Default: 10 workers.
-- Cross-file parallelism is the caller's responsibility.
+- Cross-target parallelism is the caller's responsibility.
+
+## Models
+
+### Renamed for generality
+- `LineResult` → `GuessResult`: works for any check, not just lines.
+- `FunctionScore` → `CategoryScore`: categories = functions, files, or folders.
+- `ModuleResult` → `ScoreResult`: not always scoring a "module".
+- `ScoreResult.check` field identifies the check type for reporting.
+
+### ClassificationTask
+- Generic task: `item` (what to classify), `actual` (correct answer), `candidates` (all options).
+- Each check's `extract()` method produces these. The scorer + backend process them generically.
 
 ## Scoring approach
-- Names-only in the prompt (not full signatures). User's explicit preference for Python. Parser decides what to expose.
-- No `--model` flag — not needed for Claude Code judge. Use cheapest possible model.
+- Names-only in the prompt for line-to-function (not full signatures). Parser decides what to expose.
 - No thresholds in the library — that's policy, belongs to consumers.
-- Statement filtering is conservative for now — being too aggressive hides real signals (a function full of generic code IS informative).
+- Statement filtering is conservative for now — being too aggressive hides real signals.
 
 ## Infrastructure
-- `pyproject.toml` build backend: `setuptools.build_meta` (not the legacy backend — that one doesn't work).
+- `pyproject.toml` build backend: `setuptools.build_meta`.
 - Installed editable in venv at `~/priv_projects/venvs/linescore/`.
 - Global availability via symlink: `~/.local/bin/linescore` -> venv bin.
-- Zero runtime dependencies — just stdlib + `claude` CLI on PATH.
-- Unit tests required as part of MVP. Tests use mock judges (no API cost).
+- Zero runtime dependencies for core — just stdlib + `claude` CLI on PATH.
+- `anthropic` and `llama-cpp-python` are optional dependencies.
+- Unit tests required. Tests use mock backends (no API cost).

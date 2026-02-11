@@ -2,30 +2,30 @@ import json
 
 from linescore.models import (
     ConfusedPair,
-    FunctionScore,
-    LineResult,
-    ModuleResult,
+    CategoryScore,
+    GuessResult,
+    ScoreResult,
 )
 from linescore.reporting import format_text_report, format_json
 
 
-def _make_result() -> ModuleResult:
-    return ModuleResult(
+def _make_result() -> ScoreResult:
+    return ScoreResult(
         score=0.75,
         total=4,
         correct=3,
         function_scores=[
-            FunctionScore(name="foo", total=2, correct=2, score=1.0),
-            FunctionScore(name="bar", total=2, correct=1, score=0.5),
+            CategoryScore(name="foo", total=2, correct=2, score=1.0),
+            CategoryScore(name="bar", total=2, correct=1, score=0.5),
         ],
         confused_pairs=[
             ConfusedPair(function_a="bar", function_b="foo", count=1),
         ],
         line_results=[
-            LineResult("x = 1", "foo", "foo", 0.9, True),
-            LineResult("y = calc()", "foo", "foo", 0.8, True),
-            LineResult("z = process()", "bar", "bar", 0.7, True),
-            LineResult("w = compute()", "bar", "foo", 0.6, False),
+            GuessResult("x = 1", "foo", "foo", 0.9, True),
+            GuessResult("y = calc()", "foo", "foo", 0.8, True),
+            GuessResult("z = process()", "bar", "bar", 0.7, True),
+            GuessResult("w = compute()", "bar", "foo", 0.6, False),
         ],
     )
 

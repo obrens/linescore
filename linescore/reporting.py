@@ -1,4 +1,4 @@
-"""Convenience formatters for ModuleResult.
+"""Convenience formatters for ScoreResult.
 
 These are optional — consumers can format results however they want.
 """
@@ -6,11 +6,11 @@ These are optional — consumers can format results however they want.
 import json
 from dataclasses import asdict
 
-from linescore.models import ModuleResult
+from linescore.models import ScoreResult
 
 
-def format_text_report(result: ModuleResult, file_path: str = "") -> str:
-    """Format a ModuleResult as a human-readable text report."""
+def format_text_report(result: ScoreResult, file_path: str = "") -> str:
+    """Format a ScoreResult as a human-readable text report."""
     lines: list[str] = []
 
     header = "LINE IDENTIFIABILITY SCORE"
@@ -59,8 +59,8 @@ def format_text_report(result: ModuleResult, file_path: str = "") -> str:
     return "\n".join(lines)
 
 
-def format_json(result: ModuleResult, file_path: str = "") -> str:
-    """Format a ModuleResult as JSON."""
+def format_json(result: ScoreResult, file_path: str = "") -> str:
+    """Format a ScoreResult as JSON."""
     data = asdict(result)
     if file_path:
         data["file"] = file_path

@@ -1,67 +1,92 @@
-import textwrap
-
 import pytest
 
-from linescore.models import FunctionInfo, JudgmentResult
-from linescore.scorer import score_module
+from linescore.models import ClassificationTask, JudgmentResult
+from linescore.scorer import score
 
 
-class FakeParser:
-    """Parser that returns pre-defined functions."""
+class FakeCheck:
+    """Check that returns pre-defined tasks."""
 
-    def __init__(self, functions: list[FunctionInfo]):
-        self._functions = functions
+    name = "fake-check"
 
-    def extract_functions(self, source: str) -> list[FunctionInfo]:
-        return self._functions
+    def __init__(self, tasks: list[ClassificationTask]):
+        self._tasks = tasks
+
+    def extract(self, target: str) -> list[ClassificationTask]:
+        return self._tasks
+
+    def build_prompt(self, candidates: list[str], item: str) -> str:
+        return f"classify {item} among {candidates}"
 
 
-class PerfectJudge:
-    """Judge that always guesses correctly."""
+class PerfectBackend:
+    """Backend that always returns the correct guess (item contains the answer)."""
 
     def __init__(self):
-        self.calls: list[tuple[list[str], str]] = []
+        self.prompts: list[str] = []
 
-    def judge(self, function_names: list[str], statement: str) -> JudgmentResult:
-        self.calls.append((function_names, statement))
-        # Cheat: the statement contains the function name
-        for name in function_names:
-            if name in statement:
-                return JudgmentResult(guess=name, confidence=1.0)
-        return JudgmentResult(guess=function_names[0], confidence=0.5)
-
-
-class WrongJudge:
-    """Judge that always guesses the wrong function."""
-
-    def judge(self, function_names: list[str], statement: str) -> JudgmentResult:
-        # Always guess the first function that ISN'T in the statement
-        for name in function_names:
-            if name not in statement:
-                return JudgmentResult(guess=name, confidence=0.8)
-        return JudgmentResult(guess="unknown", confidence=0.1)
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        # Extract item from "classify <item> among [...]"
+        # The item is embedded in the prompt by FakeCheck
+        # We cheat: return the first candidate that appears in the prompt
+        # For our test data, the item contains the category name
+        import json
+        # Parse candidates from the prompt format "classify <item> among ['a', 'b']"
+        parts = prompt.split(" among ")
+        item = parts[0].removeprefix("classify ")
+        candidates = eval(parts[1])
+        for c in candidates:
+            if c in item:
+                return json.dumps({"guess": c, "confidence": 1.0})
+        return json.dumps({"guess": candidates[0], "confidence": 0.5})
 
 
-def _make_functions() -> list[FunctionInfo]:
+class WrongBackend:
+    """Backend that always returns the wrong guess."""
+
+    def complete(self, prompt: str) -> str:
+        import json
+        parts = prompt.split(" among ")
+        item = parts[0].removeprefix("classify ")
+        candidates = eval(parts[1])
+        for c in candidates:
+            if c not in item:
+                return json.dumps({"guess": c, "confidence": 0.8})
+        return json.dumps({"guess": "unknown", "confidence": 0.1})
+
+
+def _make_tasks() -> list[ClassificationTask]:
     return [
-        FunctionInfo(name="calculate_tax", statements=[
-            "calculate_tax: rate = get_tax_rate()",
-            "calculate_tax: amount = price * rate",
-        ]),
-        FunctionInfo(name="send_email", statements=[
-            "send_email: msg = build_message(to, subject)",
-            "send_email: smtp.send(msg)",
-        ]),
+        ClassificationTask(
+            item="calculate_tax: rate = get_tax_rate()",
+            actual="calculate_tax",
+            candidates=["calculate_tax", "send_email"],
+        ),
+        ClassificationTask(
+            item="calculate_tax: amount = price * rate",
+            actual="calculate_tax",
+            candidates=["calculate_tax", "send_email"],
+        ),
+        ClassificationTask(
+            item="send_email: msg = build_message(to, subject)",
+            actual="send_email",
+            candidates=["calculate_tax", "send_email"],
+        ),
+        ClassificationTask(
+            item="send_email: smtp.send(msg)",
+            actual="send_email",
+            candidates=["calculate_tax", "send_email"],
+        ),
     ]
 
 
-class TestScoreModule:
+class TestScore:
     def test_perfect_score(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = PerfectJudge()
+        check = FakeCheck(_make_tasks())
+        backend = PerfectBackend()
 
-        result = score_module("ignored", parser, judge, workers=1)
+        result = score(check, backend, "ignored", workers=1)
 
         assert result.score == 1.0
         assert result.correct == 4
@@ -70,81 +95,77 @@ class TestScoreModule:
         assert all(r.correct for r in result.line_results)
 
     def test_zero_score(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = WrongJudge()
+        check = FakeCheck(_make_tasks())
+        backend = WrongBackend()
 
-        result = score_module("ignored", parser, judge, workers=1)
+        result = score(check, backend, "ignored", workers=1)
 
         assert result.score == 0.0
         assert result.correct == 0
         assert result.total == 4
 
-    def test_too_few_functions_raises(self):
-        parser = FakeParser([
-            FunctionInfo(name="only_one", statements=["x = 1"]),
+    def test_empty_tasks_raises(self):
+        check = FakeCheck([])
+        backend = PerfectBackend()
+
+        with pytest.raises(ValueError, match="No classification tasks"):
+            score(check, backend, "ignored")
+
+    def test_single_category_raises(self):
+        check = FakeCheck([
+            ClassificationTask(item="x = 1", actual="only_one", candidates=["only_one"]),
         ])
-        judge = PerfectJudge()
+        backend = PerfectBackend()
 
-        with pytest.raises(ValueError, match="at least 2 functions"):
-            score_module("ignored", parser, judge)
+        with pytest.raises(ValueError, match="at least 2 categories"):
+            score(check, backend, "ignored")
 
-    def test_max_statements_sampling(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = PerfectJudge()
+    def test_max_items_sampling(self):
+        check = FakeCheck(_make_tasks())
+        backend = PerfectBackend()
 
-        result = score_module("ignored", parser, judge, max_statements=2, workers=1)
+        result = score(check, backend, "ignored", max_items=2, workers=1)
 
         assert result.total == 2
         assert len(result.line_results) == 2
 
-    def test_function_scores_computed(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = PerfectJudge()
+    def test_category_scores_computed(self):
+        check = FakeCheck(_make_tasks())
+        backend = PerfectBackend()
 
-        result = score_module("ignored", parser, judge, workers=1)
+        result = score(check, backend, "ignored", workers=1)
 
         assert len(result.function_scores) == 2
         for fs in result.function_scores:
             assert fs.score == 1.0
 
     def test_confused_pairs_populated_on_wrong_guesses(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = WrongJudge()
+        check = FakeCheck(_make_tasks())
+        backend = WrongBackend()
 
-        result = score_module("ignored", parser, judge, workers=1)
+        result = score(check, backend, "ignored", workers=1)
 
         assert len(result.confused_pairs) > 0
 
     def test_on_result_callback_called(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = PerfectJudge()
+        check = FakeCheck(_make_tasks())
+        backend = PerfectBackend()
 
         calls = []
         def callback(lr, completed, total):
             calls.append((completed, total))
 
-        score_module("ignored", parser, judge, workers=1, on_result=callback)
+        score(check, backend, "ignored", workers=1, on_result=callback)
 
         assert len(calls) == 4
-        # All calls should have total=4
         assert all(t == 4 for _, t in calls)
-        # completed counts should include 1..4
         completed_values = sorted(c for c, _ in calls)
         assert completed_values == [1, 2, 3, 4]
 
-    def test_judge_receives_all_function_names(self):
-        functions = _make_functions()
-        parser = FakeParser(functions)
-        judge = PerfectJudge()
+    def test_check_name_in_result(self):
+        check = FakeCheck(_make_tasks())
+        backend = PerfectBackend()
 
-        score_module("ignored", parser, judge, workers=1)
+        result = score(check, backend, "ignored", workers=1)
 
-        # Every call should receive both function names
-        for names, _ in judge.calls:
-            assert "calculate_tax" in names
-            assert "send_email" in names
+        assert result.check == "fake-check"

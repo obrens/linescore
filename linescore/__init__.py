@@ -1,25 +1,29 @@
-"""linescore — code quality heuristic based on line identifiability."""
+"""linescore — code quality scoring via AI classification."""
 
 from linescore.models import (
+    ClassificationTask,
     ConfusedPair,
     FunctionInfo,
-    FunctionScore,
+    CategoryScore,
     JudgmentResult,
-    LineResult,
-    ModuleResult,
+    GuessResult,
+    ScoreResult,
 )
-from linescore.scorer import score_module
+from linescore.scorer import score
+from linescore.backends import Backend
+from linescore.checks import Check
 from linescore.parsers import Parser
-from linescore.judges import Judge
 
 __all__ = [
-    "score_module",
+    "score",
+    "Backend",
+    "Check",
     "Parser",
-    "Judge",
+    "ClassificationTask",
     "FunctionInfo",
     "JudgmentResult",
-    "LineResult",
-    "FunctionScore",
+    "GuessResult",
+    "CategoryScore",
     "ConfusedPair",
-    "ModuleResult",
+    "ScoreResult",
 ]

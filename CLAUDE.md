@@ -9,3 +9,12 @@ We are building an MVP for a code quality checker. It scores a unit of code. The
 * Create a file where you will document your findings, thoughts, and next steps. This file should be clear and concise, and should include any questions or concerns you have about the project.
 * Create a plan for upgrading the POC to a full MVP. 
 * Do not touch the POC.py file, it should stay there as a working reference, although not necessarily as canonical truth.
+
+# After you're done with what you are doing now
+
+Notes for me so I don't forget what to tell you next:
+* The scoring needs to change. This favors modules with fewer functions.
+* The output needs to have a summary at the end.
+* By default, all three checks should be performed on the specified scope if applicable.
+* We will need to add statistics and analyze various open source repos, so that we can give people reference scores.
+* The program breaks the terminal, writing is not visible in the terminal after the program is run.
