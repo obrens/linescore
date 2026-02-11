@@ -1,13 +1,12 @@
 """Check: can the LLM guess which function a code line belongs to?"""
 
+from linescore.languages import Language
 from linescore.models import ClassificationTask
-from linescore.parsers import Parser
-from linescore.parsers.python import PythonParser
 
 
 _PROMPT_TEMPLATE = """\
 You are a code analysis tool. You will be given:
-1. A list of function names from a Python module.
+1. A list of function names from a source module.
 2. A single statement of code pulled from one of those functions.
 
 Your task: guess which function the statement most likely belongs to.
@@ -19,7 +18,7 @@ Function names in this module:
 {names_list}
 
 Statement:
-```python
+```
 {statement}
 ```
 
@@ -31,16 +30,16 @@ class LineToFunctionCheck:
 
     name = "line-to-function"
 
-    def __init__(self, parser: Parser | None = None):
-        self._parser = parser or PythonParser()
+    def __init__(self, language: Language):
+        self._language = language
 
     def extract(self, target: str) -> list[ClassificationTask]:
-        """Extract classification tasks from Python source code.
+        """Extract classification tasks from source code.
 
         Args:
-            target: Python source code string.
+            target: Source code string.
         """
-        functions = self._parser.extract_functions(target)
+        functions = self._language.extract_functions(target)
         if len(functions) < 2:
             return []
 

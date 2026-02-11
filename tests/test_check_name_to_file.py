@@ -3,25 +3,13 @@
 import tempfile
 from pathlib import Path
 
-from linescore.checks.name_to_file import NameToFileCheck, extract_python_names
-
-
-class TestExtractNames:
-    def test_extracts_functions_and_classes(self):
-        source = "def foo(): pass\nclass Bar: pass\nasync def baz(): pass\n"
-        assert extract_python_names(source) == ["foo", "Bar", "baz"]
-
-    def test_skips_nested(self):
-        source = "def outer():\n    def inner(): pass\n"
-        assert extract_python_names(source) == ["outer"]
-
-    def test_syntax_error_returns_empty(self):
-        assert extract_python_names("def broken(") == []
+from linescore.checks.name_to_file import NameToFileCheck
+from linescore.languages.python import PythonLanguage
 
 
 class TestNameToFileCheck:
     def setup_method(self):
-        self.check = NameToFileCheck()
+        self.check = NameToFileCheck(PythonLanguage())
 
     def test_extracts_tasks_from_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

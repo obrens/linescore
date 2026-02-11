@@ -10,7 +10,7 @@ class FunctionInfo:
 
 @dataclass
 class JudgmentResult:
-    """The AI's guess for which function a statement belongs to."""
+    """The AI's guess: which category does this item belong to?"""
     guess: str
     confidence: float
 
@@ -26,9 +26,9 @@ class ClassificationTask:
 @dataclass
 class GuessResult:
     """Result of judging a single item."""
-    statement: str
-    actual_function: str
-    guessed_function: str
+    item: str
+    actual: str
+    guessed: str
     confidence: float
     correct: bool
 
@@ -46,8 +46,8 @@ class CategoryScore:
 @dataclass
 class ConfusedPair:
     """Two categories whose items get confused with each other."""
-    function_a: str
-    function_b: str
+    category_a: str
+    category_b: str
     count: int
 
 
@@ -58,6 +58,6 @@ class ScoreResult:
     total: int
     correct: int
     check: str = ""
-    function_scores: list[CategoryScore] = field(default_factory=list)
+    category_scores: list[CategoryScore] = field(default_factory=list)
     confused_pairs: list[ConfusedPair] = field(default_factory=list)
-    line_results: list[GuessResult] = field(default_factory=list)
+    results: list[GuessResult] = field(default_factory=list)

@@ -14,14 +14,15 @@ def _make_result() -> ScoreResult:
         score=0.75,
         total=4,
         correct=3,
-        function_scores=[
+        check="line-to-function",
+        category_scores=[
             CategoryScore(name="foo", total=2, correct=2, score=1.0),
             CategoryScore(name="bar", total=2, correct=1, score=0.5),
         ],
         confused_pairs=[
-            ConfusedPair(function_a="bar", function_b="foo", count=1),
+            ConfusedPair(category_a="bar", category_b="foo", count=1),
         ],
-        line_results=[
+        results=[
             GuessResult("x = 1", "foo", "foo", 0.9, True),
             GuessResult("y = calc()", "foo", "foo", 0.8, True),
             GuessResult("z = process()", "bar", "bar", 0.7, True),
@@ -40,7 +41,7 @@ class TestTextReport:
         report = format_text_report(_make_result(), file_path="my_module.py")
         assert "my_module.py" in report
 
-    def test_contains_per_function_breakdown(self):
+    def test_contains_per_category_breakdown(self):
         report = format_text_report(_make_result())
         assert "foo" in report
         assert "bar" in report
@@ -56,6 +57,19 @@ class TestTextReport:
         assert "bar" in report
         assert "1 mismatches" in report
 
+    def test_check_specific_labels(self):
+        result = _make_result()
+        report = format_text_report(result)
+        assert "Per-function breakdown:" in report
+
+        result.check = "name-to-file"
+        report = format_text_report(result)
+        assert "Per-file breakdown:" in report
+
+        result.check = "file-to-folder"
+        report = format_text_report(result)
+        assert "Per-folder breakdown:" in report
+
 
 class TestJsonReport:
     def test_valid_json(self):
@@ -69,13 +83,13 @@ class TestJsonReport:
         data = json.loads(output)
         assert data["file"] == "test.py"
 
-    def test_includes_function_scores(self):
+    def test_includes_category_scores(self):
         output = format_json(_make_result())
         data = json.loads(output)
-        assert len(data["function_scores"]) == 2
+        assert len(data["category_scores"]) == 2
 
     def test_includes_confused_pairs(self):
         output = format_json(_make_result())
         data = json.loads(output)
         assert len(data["confused_pairs"]) == 1
-        assert data["confused_pairs"][0]["function_a"] == "bar"
+        assert data["confused_pairs"][0]["category_a"] == "bar"

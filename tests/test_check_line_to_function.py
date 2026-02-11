@@ -3,6 +3,7 @@
 import textwrap
 
 from linescore.checks.line_to_function import LineToFunctionCheck
+from linescore.languages.python import PythonLanguage
 
 
 def _source():
@@ -19,7 +20,7 @@ def _source():
 
 class TestLineToFunctionCheck:
     def setup_method(self):
-        self.check = LineToFunctionCheck()
+        self.check = LineToFunctionCheck(PythonLanguage())
 
     def test_extracts_tasks(self):
         tasks = self.check.extract(_source())

@@ -1,9 +1,8 @@
 """Check: can the LLM guess which file a function/class name belongs to?"""
 
-import ast
 from pathlib import Path
-from typing import Callable
 
+from linescore.languages import Language
 from linescore.models import ClassificationTask
 
 
@@ -26,36 +25,13 @@ Name:
 Which file does this name belong to?"""
 
 
-def extract_python_names(source: str) -> list[str]:
-    """Extract top-level function and class names from Python source."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
-
-    names = []
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.append(node.name)
-    return names
-
-
-# Type for a function that extracts names from source code
-NameExtractor = Callable[[str], list[str]]
-
-
 class NameToFileCheck:
     """Score how identifiable each function/class name is within its file."""
 
     name = "name-to-file"
 
-    def __init__(
-        self,
-        suffix: str = ".py",
-        extract_names: NameExtractor = extract_python_names,
-    ):
-        self._suffix = suffix
-        self._extract_names = extract_names
+    def __init__(self, language: Language):
+        self._language = language
 
     def extract(self, target: str) -> list[ClassificationTask]:
         """Extract classification tasks from a directory of source files.
@@ -69,14 +45,15 @@ class NameToFileCheck:
 
         # Collect names per file
         file_names: dict[str, list[str]] = {}
-        for src_file in sorted(directory.glob(f"*{self._suffix}")):
-            try:
-                source = src_file.read_text()
-            except (OSError, UnicodeDecodeError):
-                continue
-            names = self._extract_names(source)
-            if names:
-                file_names[src_file.name] = names
+        for suffix in self._language.suffixes:
+            for src_file in sorted(directory.glob(f"*{suffix}")):
+                try:
+                    source = src_file.read_text()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                names = self._language.extract_names(source)
+                if names:
+                    file_names[src_file.name] = names
 
         if len(file_names) < 2:
             return []

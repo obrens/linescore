@@ -27,12 +27,7 @@ class PerfectBackend:
 
     def complete(self, prompt: str) -> str:
         self.prompts.append(prompt)
-        # Extract item from "classify <item> among [...]"
-        # The item is embedded in the prompt by FakeCheck
-        # We cheat: return the first candidate that appears in the prompt
-        # For our test data, the item contains the category name
         import json
-        # Parse candidates from the prompt format "classify <item> among ['a', 'b']"
         parts = prompt.split(" among ")
         item = parts[0].removeprefix("classify ")
         candidates = eval(parts[1])
@@ -91,8 +86,8 @@ class TestScore:
         assert result.score == 1.0
         assert result.correct == 4
         assert result.total == 4
-        assert len(result.line_results) == 4
-        assert all(r.correct for r in result.line_results)
+        assert len(result.results) == 4
+        assert all(r.correct for r in result.results)
 
     def test_zero_score(self):
         check = FakeCheck(_make_tasks())
@@ -127,7 +122,7 @@ class TestScore:
         result = score(check, backend, "ignored", max_items=2, workers=1)
 
         assert result.total == 2
-        assert len(result.line_results) == 2
+        assert len(result.results) == 2
 
     def test_category_scores_computed(self):
         check = FakeCheck(_make_tasks())
@@ -135,9 +130,9 @@ class TestScore:
 
         result = score(check, backend, "ignored", workers=1)
 
-        assert len(result.function_scores) == 2
-        for fs in result.function_scores:
-            assert fs.score == 1.0
+        assert len(result.category_scores) == 2
+        for cs in result.category_scores:
+            assert cs.score == 1.0
 
     def test_confused_pairs_populated_on_wrong_guesses(self):
         check = FakeCheck(_make_tasks())

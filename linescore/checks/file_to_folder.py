@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from linescore.languages import Language
 from linescore.models import ClassificationTask
 
 
@@ -29,6 +30,18 @@ class FileToFolderCheck:
 
     name = "file-to-folder"
 
+    def __init__(self, language: Language):
+        self._language = language
+
+    def _should_ignore(self, name: str) -> bool:
+        if name.startswith("."):
+            return True
+        if name in self._language.ignore_dirs:
+            return True
+        if any(name.endswith(s) for s in self._language.ignore_suffixes):
+            return True
+        return False
+
     def extract(self, target: str) -> list[ClassificationTask]:
         """Extract classification tasks from a directory tree.
 
@@ -39,19 +52,22 @@ class FileToFolderCheck:
         if not root.is_dir():
             return []
 
-        # Collect children per folder (only folders that have 2+ non-hidden children)
-        folder_children: dict[str, list[str]] = {}
-        def _skip(p: Path) -> bool:
-            return any(part.startswith(".") or part == "__pycache__" for part in p.relative_to(root).parts)
+        ignore_dirs = self._language.ignore_dirs
 
+        def _skip_dir(p: Path) -> bool:
+            return any(
+                part.startswith(".") or part in ignore_dirs
+                for part in p.relative_to(root).parts
+            )
+
+        # Collect children per folder (only folders that have 2+ non-ignored children)
+        folder_children: dict[str, list[str]] = {}
         for dirpath in sorted(root.rglob("*")):
-            if not dirpath.is_dir() or _skip(dirpath):
+            if not dirpath.is_dir() or _skip_dir(dirpath):
                 continue
             children = [
                 p.name for p in sorted(dirpath.iterdir())
-                if not p.name.startswith(".")
-                and p.name != "__pycache__"
-                and not p.name.endswith(".pyc")
+                if not self._should_ignore(p.name)
             ]
             if len(children) >= 2:
                 folder_children[str(dirpath.relative_to(root))] = children
@@ -59,9 +75,7 @@ class FileToFolderCheck:
         # Also check root itself
         root_children = [
             p.name for p in sorted(root.iterdir())
-            if not p.name.startswith(".")
-            and p.name != "__pycache__"
-            and not p.name.endswith(".pyc")
+            if not self._should_ignore(p.name)
         ]
         if len(root_children) >= 2:
             folder_children["."] = root_children

@@ -5,6 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from linescore.languages import Language
 from linescore.scorer import score
 from linescore.backends import Backend
 from linescore.checks import Check
@@ -51,16 +52,25 @@ def _handle_install(args: list[str]):
     print(f"\n{name} backend installed. Use it with: linescore --backend {name}")
 
 
-def _make_check(name: str) -> Check:
+def _make_language(name: str) -> Language:
+    if name == "python":
+        from linescore.languages.python import PythonLanguage
+        return PythonLanguage()
+    else:
+        print(f"Unknown language: {name}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _make_check(name: str, language: Language) -> Check:
     if name == "line-to-function":
         from linescore.checks.line_to_function import LineToFunctionCheck
-        return LineToFunctionCheck()
+        return LineToFunctionCheck(language)
     elif name == "name-to-file":
         from linescore.checks.name_to_file import NameToFileCheck
-        return NameToFileCheck()
+        return NameToFileCheck(language)
     elif name == "file-to-folder":
         from linescore.checks.file_to_folder import FileToFolderCheck
-        return FileToFolderCheck()
+        return FileToFolderCheck(language)
     else:
         print(f"Unknown check: {name}", file=sys.stderr)
         sys.exit(1)
@@ -81,17 +91,18 @@ def _make_backend(name: str, model: str | None) -> Backend:
         sys.exit(1)
 
 
-def _collect_python_files(paths: list[str]) -> list[Path]:
-    """Resolve paths to a flat list of .py files."""
+def _collect_source_files(paths: list[str], language: Language) -> list[Path]:
+    """Resolve paths to a flat list of source files for the given language."""
     files: list[Path] = []
     for p in paths:
         path = Path(p)
-        if path.is_file() and path.suffix == ".py":
+        if path.is_file() and path.suffix in language.suffixes:
             files.append(path)
         elif path.is_dir():
-            files.extend(sorted(path.rglob("*.py")))
+            for suffix in language.suffixes:
+                files.extend(sorted(path.rglob(f"*{suffix}")))
         else:
-            print(f"Warning: skipping {p} (not a .py file or directory)", file=sys.stderr)
+            print(f"Warning: skipping {p} (not a source file or directory)", file=sys.stderr)
     return files
 
 
@@ -99,11 +110,11 @@ def _verbose_callback(result, completed, total):
     icon = "\u2713" if result.correct else "\u2717"
     print(
         f"  [{completed}/{total}] {icon}  "
-        f"actual={result.actual_function}  "
-        f"guess={result.guessed_function}  "
+        f"actual={result.actual}  "
+        f"guess={result.guessed}  "
         f"conf={result.confidence:.2f}"
     )
-    print(f"           {result.statement[:80]}")
+    print(f"           {result.item[:80]}")
 
 
 def main():
@@ -128,6 +139,12 @@ def main():
         choices=["line-to-function", "name-to-file", "file-to-folder"],
         default="line-to-function",
         help="Which check to run (default: line-to-function)",
+    )
+    parser.add_argument(
+        "--language",
+        choices=["python"],
+        default="python",
+        help="Source language (default: python)",
     )
     parser.add_argument(
         "--backend",
@@ -165,16 +182,17 @@ def main():
     )
     args = parser.parse_args()
 
-    check = _make_check(args.check)
+    language = _make_language(args.language)
+    check = _make_check(args.check, language)
     backend = _make_backend(args.backend, args.model)
     callback = _verbose_callback if args.verbose else None
 
     # For line-to-function, targets are source code strings (read from files).
     # For name-to-file and file-to-folder, targets are directory paths.
     if args.check == "line-to-function":
-        files = _collect_python_files(args.paths)
+        files = _collect_source_files(args.paths, language)
         if not files:
-            print("No Python files found.", file=sys.stderr)
+            print("No source files found.", file=sys.stderr)
             sys.exit(1)
         targets = [(str(f), f.read_text()) for f in files]
     else:

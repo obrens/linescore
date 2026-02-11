@@ -1,6 +1,5 @@
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import Callable
 
 from linescore.backends import Backend, parse_judgment_json
@@ -9,7 +8,6 @@ from linescore.models import (
     CategoryScore,
     ClassificationTask,
     ConfusedPair,
-    FunctionInfo,
     GuessResult,
     ScoreResult,
 )
@@ -69,9 +67,9 @@ def score(
         raw = backend.complete(prompt)
         jr = parse_judgment_json(raw)
         return index, GuessResult(
-            statement=task.item,
-            actual_function=task.actual,
-            guessed_function=jr.guess,
+            item=task.item,
+            actual=task.actual,
+            guessed=jr.guess,
             confidence=jr.confidence,
             correct=jr.guess == task.actual,
         )
@@ -112,14 +110,14 @@ def _build_result(
     # Per-category scores
     cat_results: dict[str, list[GuessResult]] = {}
     for r in guess_results:
-        cat_results.setdefault(r.actual_function, []).append(r)
+        cat_results.setdefault(r.actual, []).append(r)
 
-    function_scores = []
+    category_scores = []
     for cat_name in all_categories:
         results = cat_results.get(cat_name, [])
         fc = sum(r.correct for r in results)
         ft = len(results)
-        function_scores.append(CategoryScore(
+        category_scores.append(CategoryScore(
             name=cat_name,
             total=ft,
             correct=fc,
@@ -130,12 +128,12 @@ def _build_result(
     # Confused pairs
     confusion: dict[tuple[str, str], int] = {}
     for r in guess_results:
-        if not r.correct and r.guessed_function:
-            pair = (r.actual_function, r.guessed_function)
+        if not r.correct and r.guessed:
+            pair = (r.actual, r.guessed)
             confusion[pair] = confusion.get(pair, 0) + 1
 
     confused_pairs = [
-        ConfusedPair(function_a=a, function_b=b, count=c)
+        ConfusedPair(category_a=a, category_b=b, count=c)
         for (a, b), c in sorted(confusion.items(), key=lambda x: -x[1])
     ]
 
@@ -144,7 +142,7 @@ def _build_result(
         total=total,
         correct=correct,
         check=check,
-        function_scores=function_scores,
+        category_scores=category_scores,
         confused_pairs=confused_pairs,
-        line_results=guess_results,
+        results=guess_results,
     )

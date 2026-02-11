@@ -12,13 +12,13 @@ from linescore.models import (
 from linescore.scorer import score
 from linescore.backends import Backend
 from linescore.checks import Check
-from linescore.parsers import Parser
+from linescore.languages import Language
 
 __all__ = [
     "score",
     "Backend",
     "Check",
-    "Parser",
+    "Language",
     "ClassificationTask",
     "FunctionInfo",
     "JudgmentResult",

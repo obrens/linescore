@@ -8,12 +8,41 @@ from dataclasses import asdict
 
 from linescore.models import ScoreResult
 
+_CHECK_LABELS = {
+    "line-to-function": {
+        "header": "LINE IDENTIFIABILITY SCORE",
+        "breakdown": "Per-function breakdown:",
+        "wrong": "Most confidently wrong guesses (potential decomposition issues):",
+        "confused": "Most confused function pairs:",
+    },
+    "name-to-file": {
+        "header": "NAME-TO-FILE SCORE",
+        "breakdown": "Per-file breakdown:",
+        "wrong": "Most confidently wrong guesses:",
+        "confused": "Most confused file pairs:",
+    },
+    "file-to-folder": {
+        "header": "FILE-TO-FOLDER SCORE",
+        "breakdown": "Per-folder breakdown:",
+        "wrong": "Most confidently wrong guesses:",
+        "confused": "Most confused folder pairs:",
+    },
+}
+
+_DEFAULT_LABELS = {
+    "header": "CLASSIFICATION SCORE",
+    "breakdown": "Per-category breakdown:",
+    "wrong": "Most confidently wrong guesses:",
+    "confused": "Most confused category pairs:",
+}
+
 
 def format_text_report(result: ScoreResult, file_path: str = "") -> str:
     """Format a ScoreResult as a human-readable text report."""
+    labels = _CHECK_LABELS.get(result.check, _DEFAULT_LABELS)
     lines: list[str] = []
 
-    header = "LINE IDENTIFIABILITY SCORE"
+    header = labels["header"]
     if file_path:
         header = f"{file_path} — {header}"
 
@@ -22,38 +51,38 @@ def format_text_report(result: ScoreResult, file_path: str = "") -> str:
     lines.append(f"  {header}: {result.score:.1%}  ({result.correct}/{result.total})")
     lines.append("=" * 60)
 
-    # Per-function breakdown
-    if result.function_scores:
+    # Per-category breakdown
+    if result.category_scores:
         lines.append("")
-        lines.append("Per-function breakdown:")
-        scored = [fs for fs in result.function_scores if fs.total > 0]
-        for fs in sorted(scored, key=lambda f: f.score):
-            bar = "\u2588" * int(fs.score * 20) + "\u2591" * (20 - int(fs.score * 20))
+        lines.append(labels["breakdown"])
+        scored = [cs for cs in result.category_scores if cs.total > 0]
+        for cs in sorted(scored, key=lambda c: c.score):
+            bar = "\u2588" * int(cs.score * 20) + "\u2591" * (20 - int(cs.score * 20))
             lines.append(
-                f"  {fs.name:40s} {bar} {fs.score:.0%} ({fs.correct}/{fs.total})"
+                f"  {cs.name:40s} {bar} {cs.score:.0%} ({cs.correct}/{cs.total})"
             )
 
     # Most confidently wrong guesses
-    wrong = [r for r in result.line_results if not r.correct]
+    wrong = [r for r in result.results if not r.correct]
     wrong.sort(key=lambda r: r.confidence, reverse=True)
     if wrong:
         lines.append("")
-        lines.append("Most confidently wrong guesses (potential decomposition issues):")
+        lines.append(labels["wrong"])
         for r in wrong[:5]:
-            stmt_display = f'"{r.statement[:70]}..."' if len(r.statement) > 70 else f'"{r.statement}"'
-            lines.append(f"  * {stmt_display}")
+            display = f'"{r.item[:70]}..."' if len(r.item) > 70 else f'"{r.item}"'
+            lines.append(f"  * {display}")
             lines.append(
-                f"    actual: {r.actual_function}  ->  guessed: {r.guessed_function} "
+                f"    actual: {r.actual}  ->  guessed: {r.guessed} "
                 f"(confidence: {r.confidence:.0%})"
             )
 
     # Confused pairs
     if result.confused_pairs:
         lines.append("")
-        lines.append("Most confused function pairs:")
+        lines.append(labels["confused"])
         for cp in result.confused_pairs[:5]:
             lines.append(
-                f"  {cp.function_a}  <->  {cp.function_b}  ({cp.count} mismatches)"
+                f"  {cp.category_a}  <->  {cp.category_b}  ({cp.count} mismatches)"
             )
 
     return "\n".join(lines)
