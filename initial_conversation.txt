@@ -1,0 +1,382 @@
+I think I just came up with a new code quality heuristic test. I don't know how good it is, but I think it might be reasonable. I want you to search online and try to find if anyone came up with such a heuristic before. Here goes the heuristic itself: Given a random line of code from a unit (module/class/package), and knowing the names of all functions(/methods/procedures) in the unit, can you guess from which function the line was pulled?
+
+12:15 PM
+Interesting heuristic! Let me search for this concept.
+
+
+Searched the web
+
+That didn't find it directly. Let me search with more specific terms related to your concept — it's essentially about function cohesion and how distinguishable functions are from each other.
+
+
+Searched the web
+
+Interesting — I found something close in the "Code That Fits in Your Head" result. Let me look more closely at that "X out names" technique, and also search for more directly related concepts.
+
+
+Searched the web
+
+
+
+Based on my research, I haven't found your exact heuristic stated anywhere. But I did find a closely related idea worth discussing. Let me do one more targeted search.
+
+
+Searched the web
+I've done a fairly thorough search across multiple angles and I can give you a confident answer now.
+
+I couldn't find anyone who has articulated this exact heuristic before. It appears to be original — or at least not well-known in the published software engineering literature.
+
+That said, here's what's interesting: your heuristic is closely related to several well-established ideas, which is a good sign that it captures something real:
+
+The closest match is Mark Seemann's "X Out Names" heuristic from Code That Fits in Your Head (2021). His test works in the opposite direction: you replace a function/API name with "xxx" and see if a reader can still guess what it does from the body. Your heuristic inverts this — given the names, can you match a random line to the right one?
+
+What your heuristic actually tests is a combination of several known principles, bundled into a single thought experiment:
+
+Cohesion — if a function is highly cohesive, its lines will "feel" like they belong together and be distinct from other functions' lines.
+Single Responsibility Principle — if each function does one distinct thing, its lines should be identifiable.
+Good naming — the function names need to be descriptive enough that you can match them to the code.
+Appropriate abstraction level — if all functions in a class operate at the same low level of abstraction doing similar-looking work, the lines become interchangeable, suggesting the code needs restructuring.
+What I think is novel and clever about your formulation is that it's a practical mental exercise (almost a game) rather than a metric or a rule. It simultaneously tests multiple quality dimensions at once. If you fail the test, it could mean the functions are too similar (poor decomposition), the names are bad, the functions are too long and unfocused, or the abstraction levels are muddled — and any of those would be worth fixing.
+
+It also resonates with the idea that high-quality code is code where a programmer can pick a method or class at random and understand it deeply in a few minutes
+Stack Overflow
+, as described in a Stack Overflow blog post on code quality. Your heuristic is a sharper, more testable version of that intuition.
+
+I'd say it's a good heuristic — not because it catches everything, but because failing it is a reliable signal of at least one real problem.
+
+"X Out Names" sounds not very practical, or at least you didn't explain it deep enough. I mean, how much time do you have to "look at the body" of the function before having to make your guess?
+
+12:20 PM
+That's a fair point — and I should be honest that I was working from secondhand summaries of Seemann's book, not the actual text. The descriptions I found just say you replace the name with "xxx" and see if a reader can guess what the API does from the body, but none of the sources I found specified any time constraint or detailed protocol.
+
+So I can't tell you whether Seemann elaborates on that in the actual book — he may well address it, or it may be left intentionally loose as an informal gut-check rather than a rigorous procedure.
+
+But your critique applies more broadly: without a time constraint or some other boundary condition, "look at the body and guess" is less of a test and more of a vague suggestion. Given enough time, most people could figure out what most functions do. The interesting question is how quickly you can tell — which is really what readability is about.
+
+Your heuristic actually has a structural advantage here. Because you're matching a single line to a list of function names, the task is naturally constrained. Either the line gives you enough signal to pick the right function or it doesn't. There's no "well, if I study it long enough..." escape hatch. It's closer to a binary pass/fail, which makes it more practically useful as a diagnostic.
+
+Yeah, I specifically wanted to make a heuristic that doesn't only test things "in one direction". So for example, the "X Out Names" heuristic can always be passed by simply having the function have a single line that calls another function which does the actual work. This, however, would break my heuristic. Both two small and too big functions can be caught with my heuristic.
+
+12:22 PM
+That's a really insightful observation. Let me make sure I understand the failure modes your heuristic catches in both directions:
+
+Too-thin wrapper functions — If you have calculateMonthlyRevenue() that just calls sumValues(filterByMonth(data)), then any random line pulled from it is also a plausible line from dozens of other thin wrappers. The line isn't distinctive because the function isn't doing any real work of its own. Seemann's "X Out Names" would pass this just fine — the body clearly tells you what it does — but your heuristic correctly flags that something is off about the decomposition.
+
+Too-large / low-cohesion functions — If processOrder() is 200 lines handling validation, pricing, inventory, notifications, and logging, a random line like smtp.send(message) could plausibly belong to many functions. The line isn't distinctive because the function is doing too many unrelated things. This is the more obvious direction that most code quality heuristics already catch.
+
+And then there's the sweet spot where your heuristic passes: functions that are doing a meaningful, distinct chunk of work, named well enough that their lines are recognizably "theirs." A line like discount = loyalty_points * POINTS_TO_DISCOUNT_RATIO is pretty clearly from a function about calculating loyalty discounts and not from one about shipping.
+
+So the heuristic is symmetric — it penalizes both over-decomposition and under-decomposition, which is unusual. Most rules of thumb only push in one direction (usually "make it smaller"), and developers overshoot. Yours implicitly defines a healthy middle ground: functions should be substantive enough that their lines carry a recognizable identity, but focused enough that a random line still points back to them.
+
+That's a genuinely nice property. I think you're onto something.
+
+You misunderstood. Lines are not interchangeable between thin wrapper functions. They are interchangeable between the thin wrapper function and the function it calls.
+
+12:23 PM
+You're right, I misstated that. Let me correct it.
+
+If calculateMonthlyRevenue() is just a one-liner that calls sumValues(filterByMonth(data)), and you pull that line — well, did it come from calculateMonthlyRevenue() or from the body of whatever function calls calculateMonthlyRevenue()? Or really, the problem is even simpler: the actual work lives in sumValues and filterByMonth, so the line could just as easily be a line inside those functions. The wrapper and the thing it wraps become indistinguishable.
+
+The wrapper didn't earn its existence. It didn't add enough of its own semantic content to make its lines recognizably "its own" versus belonging to the function it delegates to. Your heuristic catches this because the line doesn't have a unique home — it floats ambiguously between the wrapper and the implementation.
+
+This is a subtler problem than most heuristics catch. The usual advice says "extract until each function does one thing" — but your heuristic reveals that if you extract too aggressively, you create functions that are just renaming operations on other functions, and the code loses structural clarity rather than gaining it. The function boundaries stop being meaningful.
+
+Your explanation is still not right. calculateMonthlyRevenue and sumValues might actually be distinct enough. Some functions legitimately only call two other functions, that's not a problem. Here they are clearly operating on different abstraction levels: one is doing business logic, the other is doing math. The problem that my heuristic catches is the following: the wrapper function and the wrapped function work on the same abstraction level. If you pull the line that calls the wrapped function, it would probably be easy to guess that it is used in the wrapper function. However, if you pull a line from the wrapped function, it will be unclear whether it should go in the wrapper or the wrapped function, as they sound like they are doing the same thing.
+
+12:28 PM
+Now I understand properly. The issue isn't wrappers per se — it's unnecessary indirection within the same abstraction level.
+
+If calculateMonthlyRevenue() delegates to computeRevenueFromTransactions(), and both names suggest they're doing the same kind of work at the same level of abstraction, then when you pull a line from inside computeRevenueFromTransactions(), you can't tell whether it belongs there or in calculateMonthlyRevenue(). They sound like they should contain the same kind of code. The split between them isn't justified — one of them probably shouldn't exist, or they should be merged, or the decomposition boundary is in the wrong place.
+
+But calculateMonthlyRevenue() calling sumValues() is fine, because those operate on clearly different levels. A line doing arithmetic on a collection is obviously from sumValues, not from something named after a business concept. The abstraction gap between the two names makes the lines distinguishable.
+
+So your heuristic is really testing whether function boundaries align with meaningful abstraction boundaries. When they do, lines naturally "belong" to their function because the name and the code operate at the same level. When they don't — when someone has split one layer of abstraction across two functions — the lines from the lower one could plausibly live in either, and the heuristic fails.
+
+That's a more precise and interesting claim than what I was saying before. It's not about function size at all, really — it's about whether every split in the code corresponds to a genuine shift in abstraction level.
+
+Yeah. I actually started from a heuristic I had encountered before (don't know where), which says that you should sort of be able to say in a sentence what a function does (and the sentence then clearly corresponds to the actual lines of the function). But that is too vague, so I wanted to make it more quantifiable. But also to constrain it from the other direction (e.i. prevent thin wrapper that operate on the same abstraction level as the thing they're wrapping from seeming like good functions).
+
+12:31 PM
+That "summarize a function in one sentence" heuristic is indeed very common — it's basically a restatement of the Single Responsibility Principle, and versions of it appear everywhere from Clean Code to countless blog posts. But as you noticed, it's one-directional: it only tests whether a function is too big or unfocused. A trivial wrapper that delegates everything passes easily because you can always describe it in one sentence.
+
+Your insight was to flip the direction and ask not just "does the name match the body?" but "does the body match the name uniquely?" That extra constraint is what gives it teeth against over-decomposition. The one-sentence heuristic says "every function should have a clear purpose." Yours adds "and that purpose should be visible in its lines, and not confused with another function's purpose."
+
+It's also more concrete than the sentence test, because instead of asking someone to make a subjective judgment about whether a sentence is "one thing," you're proposing something closer to an identifiability test. Given the function names as a multiple-choice list, can you match a line to its home? That's a much more grounded question — you could almost run it as an actual experiment with developers if you wanted to validate it empirically.
+
+It would actually be interesting to think about what a formalized version would look like — something like pulling N random lines from a module, giving a developer the list of function names, and measuring the accuracy rate. That would give you a score per module rather than a binary pass/fail.
+
+Yes, that is what I am envisioning. But instead of it being like a game or academic experiment, I am thinking of making it more practical. So something like setting up a system that pulls each line from a unit (aside from maybe function/class definition lines and import etc), and then independently passes each one of them along with the list of all function names(perhaps with full signatures, perhaps not) to an AI, and then the AI has to make a guess. In the end we get a percentage guess score. The AI must not have any additional context aside from the function single line of code.
+
+12:36 PM
+That's a really practical design. Using an AI as the judge removes the human bottleneck and makes it something you could run as part of a CI pipeline or code review process.
+
+There are some interesting design decisions to think through:
+
+What counts as a "line" — You already mentioned excluding function definitions, imports, and class declarations. You'd probably also want to skip things like bare return statements, closing braces, blank lines, and maybe pure boilerplate like self.x = x in constructors, since those are inherently ambiguous and would just add noise to the score.
+
+Signatures or just names — Providing full signatures gives the AI more to work with, which might be more realistic since a human developer would also know the function signatures. On the other hand, names only would be a stricter test that emphasizes naming quality more heavily. You could even report both scores and let the delta between them tell you something — a big gap might mean the names are poor but the structure is fine.
+
+Interpreting the score — A perfect 100% is probably unrealistic and not even desirable. Some lines are legitimately generic (if err != nil { return err } in Go, for instance). The interesting signal is probably relative: comparing the score across modules in the same codebase, or tracking it over time for the same module. A sudden drop after a refactor would be a meaningful signal.
+
+Calibration — You'd want to establish what score range corresponds to "healthy" code. Running it against a set of well-regarded open source projects versus known legacy messes would give you baseline numbers to calibrate against.
+
+One concern worth thinking about: the AI's guessing ability isn't constant — it improves over time as models get better. So your scores would need to be pinned to a specific model version to be comparable across time, or you'd need to re-baseline periodically.
+
+Yeah, the desirable score is definitely only definable per codebase/component or similar. I think in Python I'd just give it the function names. In the end, the name should tell the whole story of what the function is doing. But in Java where functions can be overloaded it's kind of necessary to dive the full signature. I think deciding which lines to pass and which not is actually quite a challenge, you have to write an advanced parser for that.
+
+12:39 PM
+On the parsing challenge — yes, it's harder than it initially looks. Beyond the obvious exclusions, you'd run into edge cases constantly. What about decorators in Python? Multi-line expressions that got split across lines? Lambda bodies? A line that's just else:? Context managers like with open(f) as file:? Each of these is somewhere on a spectrum from "clearly identifiable" to "pure syntactic noise," and where you draw the line affects the score.
+
+You could sidestep some of this by operating on AST nodes rather than raw text lines. Instead of pulling line 47 from the file, you'd pull individual statements or expressions from the parsed tree. That would naturally skip syntactic scaffolding and give you semantically meaningful units. It would also handle multi-line expressions gracefully since the AST doesn't care about line breaks. Python's ast module makes this relatively straightforward. Java has tools like JavaParser that could do the same.
+
+On the Python names point — I agree. If a Python function is named well, the name alone should be enough context for the AI to make its guess. And that's actually a nice property of the heuristic: in languages where the name is the only distinguishing interface (no overloading, no type signatures), it puts maximum pressure on naming quality. If the AI can't match lines to names, either the names are bad or the decomposition is bad — and both are worth knowing.
+
+For Java, providing the full signature is pragmatic, but it also subtly shifts what you're testing. You're now partly testing whether the types make the function's role clear, which is a different (though also valuable) quality signal.
+
+Yeah, so I'd love to have this, but it seems overall hard to implement.
+
+12:41 PM
+It's definitely non-trivial, but I don't think it's as far out of reach as it might feel. The hardest parts are really the parsing and the line filtering — the AI judging part is just API calls.
+
+You could start with a rough prototype that takes a deliberately simple approach to filtering: just strip obvious noise like blank lines, comments, imports, and function definitions via regex or simple AST walking, and accept that some ambiguous lines will get through. A noisy score is still a useful score if you're comparing modules against each other within the same codebase, since the noise affects them roughly equally.
+
+For Python specifically, ast.walk gives you function bodies pretty easily, and you can extract individual statements from each function. That gets you 80% of the way there without writing a full parser. The remaining edge cases — decorators, nested functions, comprehensions spread across lines — could be handled incrementally as you refine.
+
+The actual pipeline would be something like: parse the file, extract function names, extract statements per function, shuffle all statements together, send each one to the AI with the list of names, collect guesses, compute accuracy. That's maybe a weekend project for an MVP.
+
+The real question is whether the signal-to-noise ratio of a rough version is good enough to be useful, or whether you need to solve all the parsing edge cases before the score means anything. My guess is that a rough version on a few real codebases would quickly tell you whether the concept delivers meaningful insight — and if it does, that's the motivation to invest in the polished version.
+
+Want me to put together a basic prototype?
+
+Yes, do it!
+
+12:42 PM
+Code Quality Heuristic - Line Identifiability Score
+Code
+Here's a working prototype. You run it like:
+
+bash
+pip install anthropic
+export ANTHROPIC_API_KEY=your_key_here
+python code_quality_heuristic.py my_module.py --verbose
+Some notes on the design choices I made:
+
+Parsing — I went with ast rather than regex. The StatementExtractor walks function bodies and pulls individual statements. For compound statements like if/for, it grabs the header line separately and recurses into the body, so you get individual meaningful units rather than whole blocks.
+
+Filtering — It skips bare return, pass, break, else:, ellipsis, and simple self.x = x constructor assignments. This is the part that'll need the most iteration as you try it on real code.
+
+Reporting — Beyond the overall score, it gives you a per-function breakdown (which functions are most/least identifiable), the most confidently wrong guesses (these are the most actionable — the AI was sure the line belonged somewhere else), and the most confused function pairs (which directly points to decomposition problems or same-abstraction-level splits).
+
+Cost control — The --max-statements flag lets you sample rather than judge every line, since each line is an API call.
+
+The main thing I'd want to refine first if I were you is the statement filtering — try it on a real file you know well and see which lines are getting through that shouldn't be.
+
+Hmm okay, let's not install new packages for the ai. I already have Claude Code on my compture. Use that.
+
+12:46 PM
+Good call — Claude Code can just be invoked as a subprocess. Much simpler.
+
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 2
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 3
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 4
+Now the only external dependency is having claude CLI available on your PATH, which you already have. No pip install needed — just stdlib plus Claude Code.
+
+The key change is in judge_statement: it shells out to claude -p <prompt> --output-format json, parses the JSON response, and extracts the guess. The --output-format json flag gives structured output with a result field containing Claude's text response.
+
+The --model CLI flag is now unused — it'll use whatever model your Claude Code is configured with. I can clean that up if you want, or you could pass --model through to the claude command if you want to control it.
+
+Okay, how do I run it?
+
+12:48 PM
+Save the artifact to a file and run it from your terminal:
+
+bash
+python code_quality_heuristic.py some_module.py --verbose
+To limit API calls while testing, use -n to sample a subset of statements:
+
+bash
+python code_quality_heuristic.py some_module.py -v -n 20
+If you want to try it on itself as a quick smoke test:
+
+bash
+python code_quality_heuristic.py code_quality_heuristic.py -v -n 15
+That last one would actually be an interesting first test — seeing which of the tool's own functions get confused with each other.
+
+I freakin' love it that! The only problem is that it's a bit slow. Should the llm be able to spit out the answer in a fraction of a second? I mean, it doesn't get that much input.
+
+12:53 PM
+Yeah, the bottleneck is that it's calling Claude Code sequentially — one subprocess per statement, each with process startup overhead, and then waiting for the response. Even if Claude thinks for a fraction of a second, spawning a new process and establishing a connection each time adds up.
+
+The easiest fix is to parallelize the calls. Python's concurrent.futures.ThreadPoolExecutor would let you run, say, 10-20 judgments at once:
+
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 5
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 6
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 7
+Now I need to add the --workers CLI argument and pass it through:
+
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 8
+Code Quality Heuristic - Line Identifiability Score
+Code ∙ Version 9
+Now it fires off 10 judgments in parallel by default. You can tune it:
+
+bash
+python code_quality_heuristic.py some_module.py -v -w 20
+If you hit rate limits, dial it back with -w 5. But 10-20 concurrent Claude Code calls should be fine and make the whole thing roughly 10-20x faster.
+
+Okay, cool, that seems to work. BTW, the results from the two runs I did on the script itself (both sampled only 15 lines, so it's imprecise):
+
+============================================================
+  LINE IDENTIFIABILITY SCORE: 86.7%  (13/15)
+============================================================
+============================================================
+  LINE IDENTIFIABILITY SCORE: 60.0%  (9/15)
+============================================================
+
+12:56 PM
+Nice — that's actually a really interesting result even with the small sample size. The variance between 87% and 60% on the same file tells you two things:
+
+First, 15 lines isn't enough to get a stable score. With ~100+ statements in the file, you're sampling a small fraction and getting noisy results. For a real run you'd probably want to judge all statements, or at least 50+, to get something reliable.
+
+Second, the fact that it scores somewhere in that range on itself is plausible. The tool has some functions that should be very identifiable (print_report doing string formatting, extract_functions doing AST walking) and others that are more ambiguous (judge_statement and judge_one doing similar subprocess/JSON work, or the various parsing helpers). It would be interesting to look at the per-function breakdown to see if that matches your intuition about which functions are well-separated.
+
+Try a full run without the -n flag if you're willing to spend the API calls:
+
+bash
+python code_quality_heuristic.py code_quality_heuristic.py -v -w 20
+That should give you a much more stable number, and the "most confused function pairs" section of the report would tell you exactly which functions the AI thinks are doing the same thing — which is the whole point of the heuristic.
+
+No, I don't want to spend the tokens now. We have this as a working POC. Let's make it a proper MVP now. So, it will still only work for Python, and it will still only work with Claude Code. But separate those decisions out from the main logic, so that other languages and AI tools can be plugged in principle. Also introduce other relevant architectural boundaries. Think also about how this can be used in practice. Is calling it from the command like the best way to use it? What is the most practical way to integrate it into the software development lifecycle. I want to pitch this to my colleagues as something that we will actually use. Before changing anything about the script, I want you to think about all these things and tell me your conclusions and plans for changing the script.
+
+1:01 PM
+Good, let me think through this properly before touching code.
+
+How this gets used in practice
+
+The most natural integration point is CI/CD — you run it on changed files in a pull request and it comments with the score and any flagged function pairs. This is how linters and static analysis tools work, and developers are already used to that workflow. A CLI is still the right interface for this, because CI pipelines invoke CLIs. But the CLI should be designed for that: machine-readable output (JSON), non-zero exit codes when the score drops below a threshold, and the ability to target specific files or directories.
+
+Local usage during development is the second use case. A developer runs it on a file they're refactoring to see if the decomposition improved. The CLI serves this too, with the human-readable report as default and JSON as an option.
+
+I wouldn't build a VS Code extension or anything like that at the MVP stage. CLI that works in CI and locally covers both use cases.
+
+Architectural boundaries
+
+I see three clear axes of variation to separate:
+
+Language parsing — Extracting functions and their statements from source code. Right now it's Python-specific using ast. For Java you'd use JavaParser, for TypeScript you'd use the TS compiler API, etc. This should be behind an interface: given source code, produce a list of functions with their statements. Each language gets its own implementation.
+AI judging — Sending a statement + function names to an LLM and getting back a guess. Right now it shells out to Claude Code. You might want to use the Anthropic API directly, or OpenAI, or a local model. This should also be behind an interface: given function names and a statement, return a guess and confidence.
+Orchestration and scoring — The logic that ties parsing and judging together: shuffle statements, dispatch judgments, collect results, compute scores. This is language-agnostic and AI-agnostic. It just needs a parser and a judge.
+Reporting is a fourth concern but less critical to abstract — it can sit on top of the scoring results and be swapped between human-readable and JSON output.
+
+CLI design for practical use
+
+The CLI should support:
+
+Analyzing a single file: identiscore my_module.py
+Analyzing multiple files or a directory: identiscore src/
+Setting a threshold for CI: --threshold 0.6 (exit code 1 if any file scores below)
+Machine-readable output: --output json
+Sampling control: -n 30 for quick checks, omit for full analysis
+Parallelism: -w 20
+Choosing the judge backend: --judge claude-code (only option for now, but the flag establishes the extension point)
+The tool name — I'd suggest something short. identiscore plays on "identifiability score." Or just linescore. Up to you.
+
+File structure
+
+I'm thinking:
+
+identiscore/
+  __init__.py
+  cli.py              # argument parsing and entry point
+  scorer.py           # orchestration: shuffle, dispatch, compute score
+  report.py           # human-readable and JSON output formatting
+  parsers/
+    __init__.py        # defines the Parser protocol
+    python.py          # Python AST-based parser
+  judges/
+    __init__.py        # defines the Judge protocol
+    claude_code.py     # Claude Code subprocess judge
+The Parser protocol: takes source code string, returns list of FunctionInfo. The Judge protocol: takes list of function names and a statement string, returns guess and confidence. The scorer doesn't know about Python or Claude — it just takes a parser and a judge and does its work.
+
+What changes from the current script
+
+The core logic stays almost identical — it's just being split across files. The parsing code moves to parsers/python.py, the Claude Code subprocess call moves to judges/claude_code.py, the scoring loop moves to scorer.py, the report printing moves to report.py, and the CLI argument handling moves to cli.py. The data classes (FunctionInfo, LineResult) go in __init__.py or a models.py.
+
+One new piece: the JSON output mode for CI integration, which is just serializing the results list and per-file scores.
+
+Does this plan align with what you're envisioning? Anything you'd change before I start building it?
+
+My comments:
+* let's not specialize for CI initially. While it should be able to be used that way eventually, my initial pitch would be to use it locally
+* reporting should probably be a separate concern, precisely because we want to evolve that over time as well. And besides, different teams in my company might prefer different integration points for this. Also, if I want to publish this, then different people in different companies definitely might want to integrate it differently
+* the need to integrate it differently also points to the need to have it be easily possible to initiate the process in different ways, make that modular as well (say - everything else is a thing - like a lib - and then the main that calls it in our MVP is out of that. I'm not saying it has to be a library initailly, just to think more in that direction)
+* is there a need for different teams and different projects to have different score thresholds? or do we always just return percentages, and how they are handled is out of our hands?
+* yes, it should be possible to analyze more than a single file. is the gathering up of all of the code also a separate, extendable concern?
+* i like both names. pro of linescore is that it is shorter and has more punch. con of it is that it is not very precise about what it does.
+Make a new plan with my comments in mind.
+
+Show more
+1:10 PM
+Good feedback. Let me revise.
+
+Core insight from your comments: this is a library first, with a CLI as just one thin consumer.
+
+The tool's value is the scoring engine. How you invoke it, what you do with the results, and where you get the files from — those are all decisions that belong to the consumer, not the library. Different teams, different companies, different workflows. The library should be opinionated about the scoring methodology but unopinionated about everything around it.
+
+Revised architecture
+
+The library has four pluggable concerns:
+
+Parsing — extract functions and statements from source. Varies by language.
+Judging — ask an AI to guess. Varies by AI provider/tool.
+Collecting — gather the source files to analyze. Varies by use case. Maybe it's a single file path. Maybe it's a git diff. Maybe it's a directory walk. Maybe it's an API call to a code review tool. The library doesn't care — it receives source strings with metadata.
+Reporting — do something with the results. Print to terminal. Write JSON. Post a GitHub comment. Send to a dashboard. Again, the library doesn't care.
+The library's core (the scorer) takes parsed functions and a judge, and returns structured results. That's it. The scorer doesn't know where the code came from or what happens with the scores.
+
+On thresholds
+
+The library should just return the data — percentages, per-function breakdowns, confused pairs, everything. Threshold decisions are policy, and policy belongs to the consumer. A CI integration might enforce a threshold. A local run might just display the number. A dashboard might track trends. The library shouldn't have an opinion.
+
+On multi-file analysis
+
+Yes, collecting is its own concern. But importantly, the scoring unit is still a single module/file — because function names only make sense within a module's scope. Multi-file analysis is just "run the scorer on each file and aggregate." The collector provides files, the scorer scores each one, the reporter presents the aggregate. Aggregation logic (average score, worst files, etc.) could live in a thin layer between scorer and reporter, or just be the reporter's job.
+
+Naming
+
+Let's go with identiscore. Clarity wins for something you're pitching to colleagues and potentially publishing. linescore sounds nice but could mean anything.
+
+Revised file structure
+
+identiscore/
+    __init__.py           # public API: score_module(), models
+    models.py             # FunctionInfo, LineResult, ModuleScore
+    scorer.py             # core scoring loop, parallelism
+    parsers/
+        __init__.py       # Parser protocol
+        python.py         # Python AST parser
+    judges/
+        __init__.py       # Judge protocol
+        claude_code.py    # Claude Code subprocess
+
+# Outside the library — just one possible consumer:
+cli.py                    # thin CLI that wires up collector + library + prints results
+The key boundary: identiscore/ is the library. It exposes score_module(source: str, parser: Parser, judge: Judge) -> ModuleScore. It knows nothing about files, directories, CLI arguments, or output formatting.
+
+cli.py is a consumer that handles file collection (walks directories, reads files), instantiates a parser and judge, calls the library, and prints results. Another consumer could be a pytest plugin, a pre-commit hook, a web service, whatever.
+
+What score_module returns
+
+A ModuleScore dataclass containing: the overall percentage, the list of LineResults, per-function breakdowns, and the confused pairs. Everything a reporter might need, pre-computed. This way reporters don't need to re-derive statistics.
+
+One question back to you
+
+Should the library do the parallelism internally (the scorer manages a thread pool), or should that be the caller's responsibility? My instinct is that the library should own it — the caller passes a workers count and the scorer handles the rest — because parallelism is tightly coupled to the scoring loop and the caller shouldn't need to think about it. But I could see an argument for keeping the scorer single-threaded and letting the caller parallelize across files instead.
+
+Ready to build when you confirm.
+
