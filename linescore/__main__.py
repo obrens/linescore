@@ -1,5 +1,5 @@
 """Allow running as `python -m linescore`."""
 
-from cli import main
+from linescore.cli import main
 
 main()

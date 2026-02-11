@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: linescore
+Version: 0.1.0
+Summary: Code quality heuristic: can an AI guess which function a line belongs to?
+Requires-Python: >=3.11

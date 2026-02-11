@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "linescore"
@@ -9,4 +9,4 @@ description = "Code quality heuristic: can an AI guess which function a line bel
 requires-python = ">=3.11"
 
 [project.scripts]
-linescore = "cli:main"
+linescore = "linescore.cli:main"

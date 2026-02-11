@@ -26,7 +26,8 @@ def format_text_report(result: ModuleResult, file_path: str = "") -> str:
     if result.function_scores:
         lines.append("")
         lines.append("Per-function breakdown:")
-        for fs in sorted(result.function_scores, key=lambda f: f.score):
+        scored = [fs for fs in result.function_scores if fs.total > 0]
+        for fs in sorted(scored, key=lambda f: f.score):
             bar = "\u2588" * int(fs.score * 20) + "\u2591" * (20 - int(fs.score * 20))
             lines.append(
                 f"  {fs.name:40s} {bar} {fs.score:.0%} ({fs.correct}/{fs.total})"
