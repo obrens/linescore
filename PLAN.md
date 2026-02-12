@@ -2,12 +2,13 @@
 
 ## Context
 
-Linescore v0.2 has three backends and three checks working. Four improvements are needed before the tool produces meaningful, comparable results:
+Linescore v0.2 has three backends and three checks working. Five improvements are needed before the tool produces meaningful, comparable results:
 
 1. **Scoring favors modules with fewer functions** — A file with 2 functions gets 50% from random guessing; one with 10 functions gets 10%. Raw accuracy is not comparable across targets.
-2. **No summary at the end** — Multi-file runs print per-file reports but no aggregate view.
-3. **Only one check runs at a time** — Users must manually specify `--check` three times to get the full picture.
-4. **No reference scores** — Users have no baseline to know if 75% is good or bad.
+2. **Only one check runs at a time** — Users must manually specify `--check` three times to get the full picture. Running on a directory doesn't recurse into subdirectories for name-to-file.
+3. **No summary or hierarchical view** — Multi-file runs print per-file reports but no aggregate view. No way to see per-folder quality breakdown across checks.
+4. **file-to-folder candidates are too broad** — Every folder in the entire tree is a candidate for every task, even folders in completely unrelated components.
+5. **No reference scores** — Users have no baseline to know if 75% is good or bad.
 
 ## Step 1: Chance-adjusted scoring
 
@@ -17,14 +18,22 @@ Linescore v0.2 has three backends and three checks working. Four improvements ar
 - Normalizes to 0.0 = random guessing, 1.0 = perfect, negative = worse than random
 - Well-known (Cohen's kappa simplification for uniform prior)
 
+**Per-task vs per-result adjustment**: For line-to-function and name-to-file, all tasks within a single `score()` call share the same candidate set, so `k` is uniform and the adjustment can be computed once on the aggregate result. However, after Step 4 (file-to-folder neighborhood scoping), different tasks may have different candidate sets (different k). The adjustment should therefore be computed **per-task** and then averaged: `adjusted = mean(per_task_adjusted_i)` where each `adjusted_i = (correct_i - 1/k_i) / (1 - 1/k_i)`. For uniform-k checks, this reduces to the same formula. This keeps the scorer general from the start.
+
 **Changes**:
 
 `linescore/models.py`:
 - `ScoreResult`: add `adjusted_score: float`, `chance_level: float`, `num_categories: int`
+- `GuessResult`: add `num_candidates: int` (the k for this specific task)
+
+`linescore/scorer.py` — `_score_one()`:
+- Record `len(task.candidates)` into `GuessResult.num_candidates`
 
 `linescore/scorer.py` — `_build_result()`:
-- Compute `k = len(candidates_set)`, `chance = 1/k`, `adjusted = (raw - chance) / (1 - chance)`
-- Pass to ScoreResult constructor
+- Per-task adjusted: for each guess, compute `k_i = guess.num_candidates`, `adj_i = (1 - 1/k_i) / (1 - 1/k_i)` if correct, else `(0 - 1/k_i) / (1 - 1/k_i)`
+- `adjusted_score = mean(adj_i)`
+- `chance_level = mean(1/k_i)` (weighted average chance)
+- `num_categories = len(union of all candidates)` (for display purposes)
 
 `linescore/reporting.py` — `format_text_report()`:
 - Header line: show adjusted score as primary, raw in parentheses
@@ -35,16 +44,19 @@ Linescore v0.2 has three backends and three checks working. Four improvements ar
 
 **Files**: `models.py`, `scorer.py`, `reporting.py`, `tests/test_scorer.py`, `tests/test_reporting.py`
 
-## Step 2: Run all checks by default
+## Step 2: Run all checks by default, with recursive directory walking
 
-**Problem**: Users must run `--check line-to-function`, then `--check name-to-file`, then `--check file-to-folder` separately.
+**Problem**: Users must run `--check line-to-function`, then `--check name-to-file`, then `--check file-to-folder` separately. Also, when passing a directory, name-to-file only scores immediate files — it doesn't recurse into subdirectories. To score a whole repo, you'd need to manually invoke it per subdirectory.
 
-**Design**: `--check` accepts `"all"` (new default), which runs every applicable check:
-- **line-to-function**: runs once per source file (target = file contents)
-- **name-to-file**: runs once per directory input (target = directory path)
-- **file-to-folder**: runs once per directory input (target = directory path)
+**Design**: `--check` accepts `"all"` (new default), which runs every applicable check. When a directory is passed, the CLI walks it recursively to discover all scorable targets:
 
-When a single file is passed, only line-to-function applies. When a directory is passed, all three apply (line-to-function runs per source file found in the directory).
+- **line-to-function**: runs once per source file found anywhere in the tree
+- **name-to-file**: runs once per subdirectory that has 2+ source files (the check itself already handles single-directory scope — the CLI just needs to discover and iterate the directories)
+- **file-to-folder**: runs once with the root directory as target (it already walks the tree internally)
+
+When a single file is passed, only line-to-function applies.
+
+**Architectural note**: The check classes and `scorer.score()` don't change — each `score()` call still takes one check + one target and returns one `ScoreResult`. The new work is in the CLI's target discovery. This is important because it means the hierarchical reporting in Step 3 is also just orchestration + aggregation over the same flat `score()` results.
 
 **Changes**:
 
@@ -52,21 +64,23 @@ When a single file is passed, only line-to-function applies. When a directory is
 - `--check` choices: add `"all"`, make it the default
 - New `_plan_runs()` function returns `list[tuple[str, Check, str, str]]` — `(check_name, check_instance, label, target)`:
   - For each file path: one `line-to-function` run
-  - For each directory path: one `line-to-function` per source file + one `name-to-file` + one `file-to-folder`
+  - For each directory path:
+    - One `line-to-function` per source file found recursively
+    - One `name-to-file` per subdirectory with 2+ source files
+    - One `file-to-folder` for the root directory
   - When `--check` is specific (not `"all"`): filter to just that check
 - Main loop iterates over `_plan_runs()` output instead of the current hardcoded if/else
 
 **Files**: `cli.py`
 
-## Step 3: Summary at end of multi-target runs
+## Step 3: Summary and hierarchical report
 
-**Problem**: When scoring multiple files/directories, the user sees per-target reports scroll by with no aggregate view.
+**Problem**: When scoring multiple files/directories, the user sees per-target reports scroll by with no aggregate view. For whole-repo runs, there's no way to see which folders score well or poorly across checks.
 
-**Design**: After all runs complete, print a summary table + overall score.
+**Design**: Two levels of summary after all runs complete:
 
-**Changes**:
+### 3a: Flat summary (always shown when multiple runs)
 
-`linescore/reporting.py` — new `format_text_summary()`:
 ```
 ============================================================
   SUMMARY: 3 targets, 2 checks
@@ -79,40 +93,120 @@ When a single file is passed, only line-to-function applies. When a directory is
   Overall (adjusted):  69.4%
 ============================================================
 ```
-- Input: `list[tuple[str, str, ScoreResult]]` — `(check_name, label, result)`
-- Overall adjusted score: mean of per-run adjusted scores (each run already normalized for its k)
+
+### 3b: Hierarchical per-folder view (when running on a directory)
+
+Group all results by folder and show per-folder averages across all check types:
+
+```
+============================================================
+  DIRECTORY REPORT: my_project/
+  Overall: 72.3% adjusted
+============================================================
+  Folder               Line    Name    File    Composite
+  src/auth/            90.1%   85.3%   77.2%   84.2%
+  src/api/             81.2%   75.0%   68.4%   74.9%
+  src/adapters/        45.6%   52.1%   38.9%   45.5%
+============================================================
+```
+
+This is produced by associating each `ScoreResult` with its folder path:
+- line-to-function result for `src/auth/login.py` → folder `src/auth/`
+- name-to-file result for `src/auth/` → folder `src/auth/`
+- file-to-folder `category_scores` are already per-folder
+
+No changes to `scorer.py` or the check classes — this is pure aggregation over existing `ScoreResult` data.
+
+**Changes**:
+
+`linescore/reporting.py`:
+- New `format_text_summary()`: flat summary table (3a)
+- New `format_folder_report()`: hierarchical per-folder view (3b)
+  - Input: `list[tuple[str, str, ScoreResult]]` — `(check_name, label, result)`
+  - Groups by folder, computes mean adjusted score per check type per folder
+  - Computes composite = mean of available check scores per folder
 
 `linescore/cli.py`:
 - Collect all `(check_name, label, result)` triples during the main loop
-- After the loop, if `len(all_results) > 1` and not `--json`, call `format_text_summary()`
-- JSON mode: already outputs a list of all results (no change needed, `adjusted_score` will be in there from step 1)
+- After the loop: print flat summary if multiple runs; print folder report if target was a directory
+- JSON mode: include `adjusted_score` per result + folder-level aggregates
 
 **Files**: `reporting.py`, `cli.py`, `tests/test_reporting.py`
 
-## Step 4: Reference scores / benchmarking (design only)
+## Step 4: Narrow file-to-folder candidate scope to local neighborhood
 
-This is a larger effort. For now, just lay the groundwork:
+**Problem**: The file-to-folder check currently uses *every* qualifying folder in the entire directory tree as candidates for every task. This conflates two different things: whether a file is well-placed within its local component, and whether it could be sorted across unrelated components. A file in `src/auth/` shouldn't need to be distinguishable from folders under `src/billing/utils/` — those are different components entirely. The check should measure local organizational quality, not global tree-wide sortability.
+
+**Design**: For each file/subfolder being classified, restrict candidates to its **local neighborhood**:
+1. **Parent folder** — the folder that actually contains the item (the correct answer)
+2. **Sibling folders** — other folders at the same level (same parent)
+3. **Grandparent folder** — one level up from the parent
+
+This keeps the question meaningful: "does this item clearly belong here among its close neighbors?" If it does, the code is well-organized locally. Items in distant parts of the tree are irrelevant.
+
+**Changes**:
+
+`linescore/checks/file_to_folder.py` — `extract()`:
+- Replace the current global `all_folders` candidate set with a per-task neighborhood computation
+- For each task item with parent `P`:
+  - `parent = P`
+  - `siblings = [child for child in P.parent.iterdir() if child.is_dir() and not ignored]`
+  - `grandparent = P.parent` (represented as its relative path, same as current convention)
+  - `candidates = deduplicated union of [parent, siblings, grandparent]`
+- If the neighborhood yields < 2 candidates (e.g., a top-level folder with no siblings), skip the task (same as current behavior for folders with < 2 children)
+
+**Files**: `file_to_folder.py`, `tests/test_check_file_to_folder.py`
+
+## Step 5: Reference scores / benchmarking
+
+This is the validation step — does the heuristic actually identify good vs bad design?
+
+**Architectural note**: After Steps 2-3, the library already supports running all checks on a whole directory and producing hierarchical per-folder reports. Benchmarking reuses this — it's just "run the same thing on someone else's repo and compare across repos."
 
 `linescore/cli.py` — add `linescore benchmark` subcommand:
 - Ships with a list of ~5 well-known open source Python repos (e.g., `requests`, `flask`, `black`, `httpx`, `fastapi`)
-- Clones them to a temp dir, runs all checks, prints a comparison table
+- Clones them to a temp dir
+- Runs the same all-checks-on-directory flow from Step 2, reuses the folder report from Step 3
+- Adds a cross-repo comparison table at the end:
+
+```
+============================================================
+  BENCHMARK COMPARISON
+============================================================
+  Repo               Line    Name    File    Composite
+  requests           81.2%   75.0%   68.4%   74.9%
+  flask              72.3%   68.1%   71.0%   70.5%
+  black              88.5%   82.3%   79.1%   83.3%
+  ...
+============================================================
+```
+
 - Stores results in `~/.linescore/benchmarks/` as JSON for future comparison
 
-This step is **design-only in this plan** — implement the subcommand skeleton and the repo list, but the actual benchmarking infrastructure (cloning, caching, comparison UI) is a follow-up. The main deliverable is steps 1-3.
+### Implementation note
+
+This step is a follow-up. The main deliverable is steps 1-4, which give users the full hierarchical scoring experience on their own repos. Benchmarking adds the curated repo list, cloning, and cross-repo comparison on top of that.
 
 ## Implementation order
 
-1. Chance-adjusted scoring (models + scorer + reporting + tests)
-2. Multi-check `--check all` (CLI restructuring)
-3. Summary output (reporting + CLI)
-4. Benchmark skeleton (CLI only, optional/stretch)
+1. Chance-adjusted scoring (models + scorer + reporting + tests) — with per-task k support from the start
+2. Multi-check `--check all` with recursive directory walking (CLI restructuring)
+3. Summary + hierarchical per-folder report (reporting + CLI)
+4. Narrow file-to-folder candidates to local neighborhood
+5. Benchmark subcommand (reuses Steps 2-3 infrastructure, optional/stretch)
+
+Steps 1-4 are the main deliverable. Step 5 is a thin layer on top.
 
 ## Verification
 
 - All existing 64 tests pass after each step
 - New tests for adjusted scoring: verify formula with known k values (k=2: 75% raw -> 50% adjusted; k=5: 40% raw -> 25% adjusted)
+- Adjusted scoring works correctly with variable k (mixed candidate set sizes)
 - `linescore --help` shows `all` as default for `--check`
-- `linescore .` runs all three checks on the current directory
+- `linescore .` runs all three checks recursively on the current directory
 - `linescore somefile.py` runs only line-to-function
-- Summary appears at the end of multi-target runs
+- Flat summary appears at the end of multi-target runs
+- Hierarchical per-folder report appears when target is a directory
 - JSON output includes `adjusted_score`, `chance_level`, `num_categories`
+- file-to-folder candidates are limited to parent, siblings, and grandparent
+- file-to-folder tests updated to verify neighborhood scoping
