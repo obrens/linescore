@@ -79,34 +79,42 @@ When a single file is passed, only line-to-function applies.
 
 **Design**: Two levels of summary after all runs complete:
 
-### 3a: Flat summary (always shown when multiple runs)
+### 3a: Flat summary with LoC weighting (always shown when multiple runs)
 
 ```
 ============================================================
-  SUMMARY: 3 targets, 2 checks
+  SUMMARY: 3 runs, 1847 LoC scored
 ============================================================
-  Check              Target               Adjusted   Raw
-  line-to-function   email.py             44.4%      66.7%
-  line-to-function   api.py               88.9%      90.0%
-  name-to-file       src/                 75.0%      87.5%
+  Check              Target               Adjusted   Raw     LoC
+  line-to-function   email.py             44.4%      66.7%   120
+  line-to-function   api.py               88.9%      90.0%   340
+  name-to-file       src/                 75.0%      87.5%   460
 ------------------------------------------------------------
-  Overall (adjusted):  69.4%
+  Overall (LoC-weighted adjusted):  72.1%
 ============================================================
 ```
+
+Each run is weighted by its LoC in the overall score: `weighted_mean = sum(adj_i * loc_i) / sum(loc_i)`. This means a 500-line file matters more than a 5-line file — the overall score reflects "how much of your code is well-organized."
+
+### Single-category items score 0
+
+Items with < 2 categories (single-function files, directories with 1 source file) receive adjusted_score=0 instead of being excluded. Combined with LoC weighting, this is self-correcting: small single-function files barely affect the score, while large un-decomposed files pull it toward 0. See DECISIONS.md for full rationale.
+
+**Implementation**: When `score()` raises ValueError for < 2 categories, the CLI creates a ScoreResult with `adjusted_score=0, weight=LoC` instead of skipping.
 
 ### 3b: Hierarchical per-folder view (when running on a directory)
 
-Group all results by folder and show per-folder averages across all check types:
+Group all results by folder and show per-folder LoC-weighted averages across all check types:
 
 ```
 ============================================================
   DIRECTORY REPORT: my_project/
-  Overall: 72.3% adjusted
+  Overall: 72.3% adjusted (LoC-weighted)
 ============================================================
-  Folder               Line    Name    File    Composite
-  src/auth/            90.1%   85.3%   77.2%   84.2%
-  src/api/             81.2%   75.0%   68.4%   74.9%
-  src/adapters/        45.6%   52.1%   38.9%   45.5%
+  Folder               Line    Name    File    Composite   LoC
+  src/auth/            90.1%   85.3%   77.2%   84.2%       820
+  src/api/             81.2%   75.0%   68.4%   74.9%       540
+  src/adapters/        45.6%   52.1%   38.9%   45.5%       190
 ============================================================
 ```
 
@@ -119,19 +127,22 @@ No changes to `scorer.py` or the check classes — this is pure aggregation over
 
 **Changes**:
 
-`linescore/reporting.py`:
-- New `format_text_summary()`: flat summary table (3a)
-- New `format_folder_report()`: hierarchical per-folder view (3b)
-  - Input: `list[tuple[str, str, ScoreResult]]` — `(check_name, label, result)`
-  - Groups by folder, computes mean adjusted score per check type per folder
-  - Computes composite = mean of available check scores per folder
+`linescore/models.py`:
+- `ScoreResult`: add `weight: int = 0` (LoC for this scoring unit)
 
 `linescore/cli.py`:
-- Collect all `(check_name, label, result)` triples during the main loop
-- After the loop: print flat summary if multiple runs; print folder report if target was a directory
-- JSON mode: include `adjusted_score` per result + folder-level aggregates
+- Compute LoC for each run:
+  - line-to-function: `len(source.splitlines())`
+  - name-to-file: sum LoC of source files in the directory
+  - file-to-folder: sum LoC of all source files under the root
+- When `score()` raises ValueError (< 2 categories): create a zero-score ScoreResult with weight=LoC instead of skipping
+- Set `result.weight = loc` on each result
 
-**Files**: `reporting.py`, `cli.py`, `tests/test_reporting.py`
+`linescore/reporting.py`:
+- `format_text_summary()`: LoC-weighted overall score, LoC column in table (3a) — **DONE, needs LoC weighting update**
+- New `format_folder_report()`: hierarchical per-folder view (3b) — **deferred**
+
+**Files**: `models.py`, `reporting.py`, `cli.py`, `tests/test_reporting.py`
 
 ## Step 4: Narrow file-to-folder candidate scope to local neighborhood
 
@@ -189,10 +200,12 @@ This step is a follow-up. The main deliverable is steps 1-4, which give users th
 
 ## Implementation order
 
-1. Chance-adjusted scoring (models + scorer + reporting + tests) — with per-task k support from the start
-2. Multi-check `--check all` with recursive directory walking (CLI restructuring)
+1. ~~Chance-adjusted scoring (models + scorer + reporting + tests) — with per-task k support from the start~~ **DONE**
+2. ~~Multi-check `--check all` with recursive directory walking (CLI restructuring)~~ **DONE**
 3. Summary + hierarchical per-folder report (reporting + CLI)
-4. Narrow file-to-folder candidates to local neighborhood
+   - 3a flat summary: **partially done** — needs LoC weighting, single-category zero-scoring, LoC column
+   - 3b hierarchical folder report: **deferred**
+4. ~~Narrow file-to-folder candidates to local neighborhood~~ **DONE**
 5. Benchmark subcommand (reuses Steps 2-3 infrastructure, optional/stretch)
 
 Steps 1-4 are the main deliverable. Step 5 is a thin layer on top.

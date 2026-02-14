@@ -48,7 +48,11 @@ def format_text_report(result: ScoreResult, file_path: str = "") -> str:
 
     lines.append("")
     lines.append("=" * 60)
-    lines.append(f"  {header}: {result.score:.1%}  ({result.correct}/{result.total})")
+    lines.append(
+        f"  {header}: {result.adjusted_score:.1%} adjusted"
+        f"  ({result.score:.1%} raw, {result.correct}/{result.total},"
+        f" chance={result.chance_level:.1%})"
+    )
     lines.append("=" * 60)
 
     # Per-category breakdown
@@ -85,6 +89,61 @@ def format_text_report(result: ScoreResult, file_path: str = "") -> str:
                 f"  {cp.category_a}  <->  {cp.category_b}  ({cp.count} mismatches)"
             )
 
+    return "\n".join(lines)
+
+
+def format_text_summary(
+    results: list[tuple[str, str, ScoreResult]],
+) -> str:
+    """Format a summary table for multiple scoring runs.
+
+    Overall score is LoC-weighted: each run contributes proportionally
+    to its lines of code. Runs with weight=0 fall back to equal weighting.
+
+    Args:
+        results: List of (check_name, label, ScoreResult) triples.
+    """
+    total_loc = sum(r.weight for _, _, r in results)
+
+    lines: list[str] = []
+    lines.append("")
+    lines.append("=" * 70)
+    loc_note = f", {total_loc} LoC" if total_loc > 0 else ""
+    lines.append(f"  SUMMARY: {len(results)} runs{loc_note}")
+    lines.append("=" * 70)
+
+    # Column widths
+    check_w = max(len(r[0]) for r in results)
+    label_w = max(len(r[1]) for r in results)
+    check_w = max(check_w, 5)  # minimum
+    label_w = min(max(label_w, 6), 40)  # cap at 40
+
+    header = (
+        f"  {'Check':<{check_w}}  {'Target':<{label_w}}"
+        f"  {'Adjusted':>8}  {'Raw':>8}  {'LoC':>5}"
+    )
+    lines.append(header)
+    lines.append("  " + "-" * (len(header) - 2))
+
+    for check_name, label, result in results:
+        display_label = label if len(label) <= label_w else "..." + label[-(label_w - 3):]
+        lines.append(
+            f"  {check_name:<{check_w}}  {display_label:<{label_w}}"
+            f"  {result.adjusted_score:>7.1%}  {result.score:>7.1%}"
+            f"  {result.weight:>5}"
+        )
+
+    # Overall — LoC-weighted if weights are available, else equal
+    if results:
+        if total_loc > 0:
+            weighted = sum(r.adjusted_score * r.weight for _, _, r in results)
+            overall = weighted / total_loc
+        else:
+            overall = sum(r.adjusted_score for _, _, r in results) / len(results)
+        lines.append("  " + "-" * (len(header) - 2))
+        lines.append(f"  Overall (LoC-weighted adjusted): {overall:.1%}")
+
+    lines.append("=" * 70)
     return "\n".join(lines)
 
 

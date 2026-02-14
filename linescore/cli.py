@@ -6,10 +6,11 @@ import sys
 from pathlib import Path
 
 from linescore.languages import Language
+from linescore.models import ScoreResult
 from linescore.scorer import score
 from linescore.backends import Backend
 from linescore.checks import Check
-from linescore.reporting import format_text_report, format_json
+from linescore.reporting import format_text_report, format_text_summary, format_json
 
 
 _INSTALLABLE_BACKENDS = {
@@ -106,6 +107,121 @@ def _collect_source_files(paths: list[str], language: Language) -> list[Path]:
     return files
 
 
+def _find_dirs_with_sources(root: Path, language: Language) -> list[Path]:
+    """Find all subdirectories under root that contain 2+ source files."""
+    dirs: list[Path] = []
+    for dirpath in sorted(root.rglob("*")):
+        if not dirpath.is_dir():
+            continue
+        if any(part.startswith(".") or part in language.ignore_dirs
+               for part in dirpath.relative_to(root).parts):
+            continue
+        source_count = sum(
+            1 for f in dirpath.iterdir()
+            if f.is_file() and f.suffix in language.suffixes
+        )
+        if source_count >= 2:
+            dirs.append(dirpath)
+    # Also check root itself
+    root_source_count = sum(
+        1 for f in root.iterdir()
+        if f.is_file() and f.suffix in language.suffixes
+    )
+    if root_source_count >= 2:
+        dirs.insert(0, root)
+    return dirs
+
+
+def _count_loc(path: Path, language: Language) -> int:
+    """Count total lines of code in source files under a path."""
+    if path.is_file():
+        try:
+            return len(path.read_text().splitlines())
+        except (OSError, UnicodeDecodeError):
+            return 0
+    total = 0
+    for suffix in language.suffixes:
+        for f in path.rglob(f"*{suffix}"):
+            if any(part.startswith(".") or part in language.ignore_dirs
+                   for part in f.relative_to(path).parts):
+                continue
+            try:
+                total += len(f.read_text().splitlines())
+            except (OSError, UnicodeDecodeError):
+                continue
+    return total
+
+
+def _dir_loc(directory: Path, language: Language) -> int:
+    """Count LoC of source files directly in a directory (non-recursive)."""
+    total = 0
+    for f in directory.iterdir():
+        if f.is_file() and f.suffix in language.suffixes:
+            try:
+                total += len(f.read_text().splitlines())
+            except (OSError, UnicodeDecodeError):
+                continue
+    return total
+
+
+def _plan_runs(
+    paths: list[str],
+    check_name: str,
+    language: Language,
+) -> list[tuple[str, str, str, int]]:
+    """Plan which (check_name, label, target, loc) tuples to run.
+
+    Returns a list of (check_name, label, target, loc) where target is either
+    source code (for line-to-function) or a directory path (for others).
+    loc is the lines of code for LoC-weighted scoring.
+    """
+    checks_to_run = (
+        ["line-to-function", "name-to-file", "file-to-folder"]
+        if check_name == "all"
+        else [check_name]
+    )
+
+    runs: list[tuple[str, str, str, int]] = []
+
+    for p in paths:
+        path = Path(p)
+
+        if path.is_file():
+            if "line-to-function" in checks_to_run and path.suffix in language.suffixes:
+                try:
+                    source = path.read_text()
+                    loc = len(source.splitlines())
+                    runs.append(("line-to-function", str(path), source, loc))
+                except (OSError, UnicodeDecodeError):
+                    print(f"Warning: cannot read {p}", file=sys.stderr)
+            continue
+
+        if not path.is_dir():
+            print(f"Warning: skipping {p} (not a source file or directory)", file=sys.stderr)
+            continue
+
+        # Directory: discover targets for each applicable check
+        if "line-to-function" in checks_to_run:
+            for src_file in _collect_source_files([str(path)], language):
+                try:
+                    source = src_file.read_text()
+                    loc = len(source.splitlines())
+                    runs.append(("line-to-function", str(src_file), source, loc))
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        if "name-to-file" in checks_to_run:
+            for d in _find_dirs_with_sources(path, language):
+                loc = _dir_loc(d, language)
+                runs.append(("name-to-file", str(d), str(d), loc))
+
+        if "file-to-folder" in checks_to_run:
+            loc = _count_loc(path, language)
+            runs.append(("file-to-folder", str(path), str(path), loc))
+
+    return runs
+
+
 def _verbose_callback(result, completed, total):
     icon = "\u2713" if result.correct else "\u2717"
     print(
@@ -136,9 +252,9 @@ def main():
     )
     parser.add_argument(
         "--check",
-        choices=["line-to-function", "name-to-file", "file-to-folder"],
-        default="line-to-function",
-        help="Which check to run (default: line-to-function)",
+        choices=["all", "line-to-function", "name-to-file", "file-to-folder"],
+        default="all",
+        help="Which check to run (default: all)",
     )
     parser.add_argument(
         "--language",
@@ -183,41 +299,43 @@ def main():
     args = parser.parse_args()
 
     language = _make_language(args.language)
-    check = _make_check(args.check, language)
     backend = _make_backend(args.backend, args.model)
     callback = _verbose_callback if args.verbose else None
 
-    # For line-to-function, targets are source code strings (read from files).
-    # For name-to-file and file-to-folder, targets are directory paths.
-    if args.check == "line-to-function":
-        files = _collect_source_files(args.paths, language)
-        if not files:
-            print("No source files found.", file=sys.stderr)
-            sys.exit(1)
-        targets = [(str(f), f.read_text()) for f in files]
-    else:
-        # Directory-based checks: paths are directories
-        targets = [(p, p) for p in args.paths]
+    runs = _plan_runs(args.paths, args.check, language)
+    if not runs:
+        print("No scorable targets found.", file=sys.stderr)
+        sys.exit(1)
 
-    all_results = []
+    # Cache check instances so we don't recreate them per run
+    checks: dict[str, Check] = {}
+    all_results: list[tuple[str, str, ScoreResult]] = []
 
-    for label, target in targets:
-        print(f"Analyzing: {label}")
+    for check_name, label, target, loc in runs:
+        if check_name not in checks:
+            checks[check_name] = _make_check(check_name, language)
+
+        print(f"[{check_name}] {label}")
 
         try:
             result = score(
-                check=check,
+                check=checks[check_name],
                 backend=backend,
                 target=target,
                 max_items=args.max_items,
                 workers=args.workers,
                 on_result=callback,
             )
-        except ValueError as e:
-            print(f"  Skipping: {e}", file=sys.stderr)
-            continue
+        except ValueError:
+            # Single-category or empty: score as 0 (neutral)
+            result = ScoreResult(
+                score=0.0, total=0, correct=0,
+                check=check_name, adjusted_score=0.0,
+                chance_level=0.0, num_categories=0,
+            )
 
-        all_results.append((label, result))
+        result.weight = loc
+        all_results.append((check_name, label, result))
 
         if not args.output_json:
             print(format_text_report(result, label))
@@ -226,10 +344,12 @@ def main():
         import json
         from dataclasses import asdict
         output = [
-            {**asdict(result), "file": label}
-            for label, result in all_results
+            {**asdict(result), "check": check_name, "target": label}
+            for check_name, label, result in all_results
         ]
         print(json.dumps(output, indent=2))
+    elif len(all_results) > 1:
+        print(format_text_summary(all_results))
 
 
 if __name__ == "__main__":

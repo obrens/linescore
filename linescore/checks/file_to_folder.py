@@ -42,8 +42,46 @@ class FileToFolderCheck:
             return True
         return False
 
+    def _neighborhood(self, folder_rel: str, root: Path) -> list[str]:
+        """Get candidate folders in the local neighborhood of a folder.
+
+        For a folder F, the neighborhood is:
+        - F itself
+        - Sibling folders (other folders at the same level as F)
+        - The parent of F (one level up)
+
+        For the root folder ".", the neighborhood is root + its direct
+        child folders (since root has no siblings or parent).
+        """
+        if folder_rel == ".":
+            # Root: candidates are root + its direct child folders
+            candidates = {"."}
+            for p in root.iterdir():
+                if p.is_dir() and not self._should_ignore(p.name):
+                    candidates.add(str(p.relative_to(root)))
+            return sorted(candidates)
+
+        folder_path = Path(folder_rel)
+        parent_path = folder_path.parent
+        parent_rel = str(parent_path) if str(parent_path) != "." else "."
+        parent_abs = root if parent_rel == "." else root / parent_rel
+
+        # Sibling folders (including folder_rel itself)
+        candidates: set[str] = set()
+        for p in parent_abs.iterdir():
+            if p.is_dir() and not self._should_ignore(p.name):
+                candidates.add(str(p.relative_to(root)))
+
+        # Also include the parent folder
+        candidates.add(parent_rel)
+
+        return sorted(candidates)
+
     def extract(self, target: str) -> list[ClassificationTask]:
         """Extract classification tasks from a directory tree.
+
+        Each item is classified among its local neighborhood: its parent
+        folder, sibling folders, and grandparent folder.
 
         Args:
             target: Path to a root directory to walk.
@@ -80,17 +118,16 @@ class FileToFolderCheck:
         if len(root_children) >= 2:
             folder_children["."] = root_children
 
-        if len(folder_children) < 2:
-            return []
-
-        all_folders = list(folder_children.keys())
         tasks = []
         for folder, children in folder_children.items():
+            candidates = self._neighborhood(folder, root)
+            if len(candidates) < 2:
+                continue
             for child in children:
                 tasks.append(ClassificationTask(
                     item=child,
                     actual=folder,
-                    candidates=all_folders,
+                    candidates=candidates,
                 ))
         return tasks
 

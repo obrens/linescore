@@ -70,6 +70,29 @@
 - No thresholds in the library — that's policy, belongs to consumers.
 - Statement filtering is conservative for now — being too aggressive hides real signals.
 
+### Chance-adjusted scoring
+- Raw accuracy is not comparable across targets with different numbers of categories (a 75% score with 2 functions is less impressive than 75% with 10).
+- Adjusted score: `(raw - 1/k) / (1 - 1/k)` where k = number of candidates. 0.0 = random guessing, 1.0 = perfect, negative = worse than random.
+- Adjustment is computed **per-task** then averaged, not on the aggregate. This handles checks where different tasks have different candidate set sizes (e.g., file-to-folder with neighborhood scoping).
+
+### LoC weighting in summaries
+- When aggregating scores across multiple runs (e.g., across files in a repo), each run is weighted by its **lines of code**, not equally.
+- Rationale: LoC is a consistent measure of "how much code does this unit represent" across all check types. A 500-line file should matter more than a 5-line file in the overall score.
+- Task count (number of classification items) was considered as an alternative weight, but it means different things per check (statements vs names vs folder children) and doesn't consistently reflect code volume.
+
+### Single-category items score 0
+- Items with < 2 categories (single-function files, directories with 1 source file, etc.) cannot be meaningfully classified — there's nothing to compare against.
+- Rather than excluding them (which inflates the score by only counting evaluable code), they receive an **adjusted score of 0** — the neutral "no evidence of quality" baseline.
+- Combined with LoC weighting, this is self-correcting:
+  - Small single-function files: tiny weight, barely affect the overall score. Correct — a small focused file is fine.
+  - Large single-function files: significant weight, pulls score toward 0. Also correct — a 500-line un-decomposed file is a design smell.
+- Excluding single-category items entirely would mean a repo that's 80% god-files only gets scored on the 20% that has multiple functions, which is misleading.
+
+### File-to-folder neighborhood scoping
+- File-to-folder candidates are restricted to the **local neighborhood**: the item's parent folder, sibling folders, and the grandparent folder.
+- Rationale: a file only needs to be sortable within its local component. A file in `src/auth/` shouldn't need to be distinguishable from folders under `src/billing/utils/` — those are different components. The check measures local organizational quality, not global tree-wide sortability.
+- For the root folder, the neighborhood is root + its direct child folders (since root has no siblings or parent).
+
 ## Infrastructure
 - `pyproject.toml` build backend: `setuptools.build_meta`.
 - Installed editable in venv at `~/priv_projects/venvs/linescore/`.

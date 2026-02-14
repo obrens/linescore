@@ -72,6 +72,7 @@ def score(
             guessed=jr.guess,
             confidence=jr.confidence,
             correct=jr.guess == task.actual,
+            num_candidates=len(task.candidates),
         )
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -125,6 +126,25 @@ def _build_result(
             results=results,
         ))
 
+    # Per-task chance-adjusted scores
+    adjusted_scores = []
+    chance_levels = []
+    for r in guess_results:
+        k = r.num_candidates if r.num_candidates >= 2 else len(all_categories)
+        chance = 1.0 / k
+        score_i = 1.0 if r.correct else 0.0
+        adj_i = (score_i - chance) / (1.0 - chance)
+        adjusted_scores.append(adj_i)
+        chance_levels.append(chance)
+
+    adjusted_score = sum(adjusted_scores) / len(adjusted_scores) if adjusted_scores else 0.0
+    chance_level = sum(chance_levels) / len(chance_levels) if chance_levels else 0.0
+
+    # Collect all unique candidates across tasks
+    all_candidates = set()
+    for t in tasks:
+        all_candidates.update(t.candidates)
+
     # Confused pairs
     confusion: dict[tuple[str, str], int] = {}
     for r in guess_results:
@@ -142,6 +162,9 @@ def _build_result(
         total=total,
         correct=correct,
         check=check,
+        adjusted_score=adjusted_score,
+        chance_level=chance_level,
+        num_categories=len(all_candidates),
         category_scores=category_scores,
         confused_pairs=confused_pairs,
         results=guess_results,

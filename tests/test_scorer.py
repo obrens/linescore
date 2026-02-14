@@ -164,3 +164,76 @@ class TestScore:
         result = score(check, backend, "ignored", workers=1)
 
         assert result.check == "fake-check"
+
+    def test_adjusted_score_perfect_k2(self):
+        """Perfect score with k=2: adjusted should be 1.0."""
+        check = FakeCheck(_make_tasks())  # k=2 (2 candidates)
+        backend = PerfectBackend()
+
+        result = score(check, backend, "ignored", workers=1)
+
+        assert result.adjusted_score == pytest.approx(1.0)
+        assert result.chance_level == pytest.approx(0.5)
+        assert result.num_categories == 2
+
+    def test_adjusted_score_zero_k2(self):
+        """All wrong with k=2: adjusted should be -1.0."""
+        check = FakeCheck(_make_tasks())
+        backend = WrongBackend()
+
+        result = score(check, backend, "ignored", workers=1)
+
+        # adjusted = (0 - 0.5) / (1 - 0.5) = -1.0
+        assert result.adjusted_score == pytest.approx(-1.0)
+
+    def test_adjusted_score_k5(self):
+        """With k=5, 40% raw -> 25% adjusted."""
+        candidates = ["a", "b", "c", "d", "e"]
+        tasks = [
+            ClassificationTask(item=f"a: item{i}", actual="a", candidates=candidates)
+            for i in range(2)
+        ] + [
+            ClassificationTask(item=f"b: item{i}", actual="b", candidates=candidates)
+            for i in range(3)
+        ] + [
+            ClassificationTask(item=f"c: item{i}", actual="c", candidates=candidates)
+            for i in range(5)
+        ]  # 10 tasks total
+        check = FakeCheck(tasks)
+        backend = PerfectBackend()
+
+        result = score(check, backend, "ignored", workers=1)
+
+        # chance = 1/5 = 0.2, raw = 1.0, adjusted = (1.0 - 0.2) / (1 - 0.2) = 1.0
+        assert result.chance_level == pytest.approx(0.2)
+        assert result.adjusted_score == pytest.approx(1.0)
+        assert result.num_categories == 5
+
+    def test_adjusted_score_mixed_k(self):
+        """Tasks with different candidate set sizes compute per-task adjustment."""
+        tasks = [
+            # k=2 task, will be correct
+            ClassificationTask(item="a: line1", actual="a", candidates=["a", "b"]),
+            # k=4 task, will be correct
+            ClassificationTask(item="a: line2", actual="a", candidates=["a", "b", "c", "d"]),
+        ]
+        check = FakeCheck(tasks)
+        backend = PerfectBackend()
+
+        result = score(check, backend, "ignored", workers=1)
+
+        # Task 1: adj = (1 - 0.5) / (1 - 0.5) = 1.0
+        # Task 2: adj = (1 - 0.25) / (1 - 0.25) = 1.0
+        # Mean = 1.0
+        assert result.adjusted_score == pytest.approx(1.0)
+        # Chance = mean(0.5, 0.25) = 0.375
+        assert result.chance_level == pytest.approx(0.375)
+
+    def test_num_candidates_recorded(self):
+        check = FakeCheck(_make_tasks())
+        backend = PerfectBackend()
+
+        result = score(check, backend, "ignored", workers=1)
+
+        for r in result.results:
+            assert r.num_candidates == 2

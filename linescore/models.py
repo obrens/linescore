@@ -31,6 +31,7 @@ class GuessResult:
     guessed: str
     confidence: float
     correct: bool
+    num_candidates: int = 0
 
 
 @dataclass
@@ -58,6 +59,10 @@ class ScoreResult:
     total: int
     correct: int
     check: str = ""
+    adjusted_score: float = 0.0
+    chance_level: float = 0.0
+    num_categories: int = 0
+    weight: int = 0
     category_scores: list[CategoryScore] = field(default_factory=list)
     confused_pairs: list[ConfusedPair] = field(default_factory=list)
     results: list[GuessResult] = field(default_factory=list)
