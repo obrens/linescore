@@ -14,6 +14,12 @@ class Backend(Protocol):
         ...
 
 
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks (e.g., from Qwen3 reasoning models)."""
+    import re
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 def parse_judgment_json(text: str) -> JudgmentResult:
     """Parse a JSON response into a JudgmentResult.
 
@@ -21,7 +27,10 @@ def parse_judgment_json(text: str) -> JudgmentResult:
     - Direct JSON: {"guess": "...", "confidence": ...}
     - Claude Code wrapped: {"result": "..."}
     - Markdown-fenced JSON in result field
+    - Thinking-wrapped responses (e.g., <think>...</think> from Qwen3)
     """
+    text = _strip_thinking(text)
+
     try:
         outer = json.loads(text)
     except (json.JSONDecodeError, AttributeError, TypeError):

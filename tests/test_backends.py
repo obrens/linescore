@@ -37,6 +37,18 @@ class TestParseJudgmentJson:
         assert r.guess == ""
         assert r.confidence == 0.0
 
+    def test_thinking_wrapped_response(self):
+        text = '<think>\nLet me reason about this...\n</think>\n\n{"guess": "foo", "confidence": 0.85}'
+        r = parse_judgment_json(text)
+        assert r.guess == "foo"
+        assert r.confidence == 0.85
+
+    def test_thinking_with_markdown_fenced(self):
+        text = '<think>\nthinking...\n</think>\n\n```json\n{"guess": "bar", "confidence": 0.7}\n```'
+        r = parse_judgment_json(text)
+        assert r.guess == "bar"
+        assert r.confidence == 0.7
+
 
 class TestClaudeCodeBackend:
     @patch("linescore.backends.claude_code.subprocess.run")

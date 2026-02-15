@@ -198,6 +198,32 @@ This is the validation step — does the heuristic actually identify good vs bad
 
 This step is a follow-up. The main deliverable is steps 1-4, which give users the full hierarchical scoring experience on their own repos. Benchmarking adds the curated repo list, cloning, and cross-repo comparison on top of that.
 
+## Step 6: Backend installation should handle API key setup
+
+**Problem**: `linescore install anthropic` installs the Python SDK (`anthropic>=0.39.0`) but gives no guidance about the API key. The backend then crashes with a confusing `TypeError` from deep in the SDK when `ANTHROPIC_API_KEY` isn't set. A user who just installed the SDK has no reason to know this is needed.
+
+**What `linescore install anthropic` currently does**:
+- Runs `pip install anthropic>=0.39.0`
+- Prints "anthropic backend installed. Use it with: linescore --backend anthropic"
+- That's it — no key validation, no setup instructions
+
+**Design**: The install flow should:
+1. Install the SDK (as it does now)
+2. Check if `ANTHROPIC_API_KEY` is already set in the environment
+3. If not, prompt the user to enter it
+4. Store the key in `~/.linescore/config` (or similar) so it persists across sessions
+5. The backend should check this config file as a fallback when the env var isn't set
+
+Additionally, the backend should catch the missing-key error at init time and give a clear message:
+```
+Error: ANTHROPIC_API_KEY not set.
+Run `linescore install anthropic` to configure it, or set the environment variable.
+```
+
+**Applies to**: Any backend that needs credentials. Currently just `anthropic`, but the pattern should be generic enough for future backends (OpenAI, etc.).
+
+**This is a follow-up — not blocking current work.**
+
 ## Implementation order
 
 1. ~~Chance-adjusted scoring (models + scorer + reporting + tests) — with per-task k support from the start~~ **DONE**

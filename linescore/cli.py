@@ -1,5 +1,5 @@
 """CLI for linescore — thin consumer of the library."""
-
+import os
 import subprocess
 import argparse
 import sys
@@ -16,6 +16,7 @@ from linescore.reporting import format_text_report, format_text_summary, format_
 _INSTALLABLE_BACKENDS = {
     "anthropic": ["anthropic>=0.39.0"],
     "llamacpp": ["llama-cpp-python>=0.3.0", "huggingface-hub>=0.20.0"],
+    "groq": ["groq>=0.11.0"],
 }
 
 
@@ -49,6 +50,19 @@ def _handle_install(args: list[str]):
         )
         if result.returncode != 0:
             sys.exit(result.returncode)
+
+    # Prompt for API key for groq
+    if name == "groq":
+        print("\nTo use Groq, you need an API key from https://console.groq.com/keys")
+        api_key = input("Enter your Groq API key (or press Enter to skip): ").strip()
+        if api_key:
+            # Store in environment variable for current session
+            os.environ["GROQ_API_KEY"] = api_key
+            print("\nAPI key set for current session.")
+            print("To persist it, add to your shell profile:")
+            print(f'  export GROQ_API_KEY="{api_key}"')
+        else:
+            print("\nSkipped API key setup. Set GROQ_API_KEY environment variable before using.")
 
     print(f"\n{name} backend installed. Use it with: linescore --backend {name}")
 
@@ -87,6 +101,9 @@ def _make_backend(name: str, model: str | None) -> Backend:
     elif name == "llamacpp":
         from linescore.backends.llamacpp import LlamaCppBackend
         return LlamaCppBackend(model_path=model)
+    elif name == "groq":
+        from linescore.backends.groq_backend import GroqBackend
+        return GroqBackend(model=model) if model else GroqBackend()
     else:
         print(f"Unknown backend: {name}", file=sys.stderr)
         sys.exit(1)
@@ -264,7 +281,7 @@ def main():
     )
     parser.add_argument(
         "--backend",
-        choices=["claude-code", "anthropic", "llamacpp"],
+        choices=["claude-code", "anthropic", "llamacpp", "groq"],
         default="claude-code",
         help="LLM backend to use (default: claude-code)",
     )
