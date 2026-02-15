@@ -229,12 +229,13 @@ Run `linescore install anthropic` to configure it, or set the environment variab
 1. ~~Chance-adjusted scoring (models + scorer + reporting + tests) — with per-task k support from the start~~ **DONE**
 2. ~~Multi-check `--check all` with recursive directory walking (CLI restructuring)~~ **DONE**
 3. Summary + hierarchical per-folder report (reporting + CLI)
-   - 3a flat summary: **partially done** — needs LoC weighting, single-category zero-scoring, LoC column
+   - 3a flat summary with LoC weighting: **DONE** — LoC-weighted overall score, LoC column, single-category zero-scoring
    - 3b hierarchical folder report: **deferred**
 4. ~~Narrow file-to-folder candidates to local neighborhood~~ **DONE**
 5. Benchmark subcommand (reuses Steps 2-3 infrastructure, optional/stretch)
+6. Backend installation should handle API key setup — **deferred**
 
-Steps 1-4 are the main deliverable. Step 5 is a thin layer on top.
+Steps 1-4 + 3a are done. Remaining: 3b (hierarchical folder report), 5 (benchmarking), 6 (API key setup).
 
 ## Verification
 

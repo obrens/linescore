@@ -14,6 +14,7 @@
   - `ClaudeCodeBackend`: subprocess to `claude` CLI.
   - `AnthropicBackend`: Anthropic Python SDK (messages API).
   - `LlamaCppBackend`: llama-cpp-python bindings (local, in-process, thread-safe via lock).
+  - `GroqBackend`: Groq SDK (cloud inference). Default model: `qwen/qwen3-32b`. Uses `reasoning_effort="none"` to disable Qwen3's thinking mode (saves tokens, avoids `<think>` blocks in responses).
 - **Checks** = what to score. Protocol: `extract(target) -> list[ClassificationTask]` + `build_prompt(candidates, item) -> str`. Checks are language-agnostic.
   - `LineToFunctionCheck`: can the LLM guess which function a line belongs to?
   - `NameToFileCheck`: can the LLM guess which file a function/class name belongs to?
@@ -98,7 +99,20 @@
 - Installed editable in venv at `~/priv_projects/venvs/linescore/`.
 - Global availability via symlink: `~/.local/bin/linescore` -> venv bin.
 - Zero runtime dependencies for core — just stdlib + `claude` CLI on PATH.
-- `anthropic` and `llama-cpp-python` are optional dependencies, installed via `linescore install <backend>`.
+- `anthropic`, `llama-cpp-python`, and `groq` are optional dependencies, installed via `linescore install <backend>`.
 - Install subprocess runs from `cwd="/"` to avoid CWD import poisoning.
 - LlamaCpp default model: Qwen2.5-Coder-1.5B-Instruct (Q4_K_M), auto-downloaded to `~/.linescore/models/`.
 - Unit tests required. Tests use mock backends (no API cost).
+
+### Backend file naming
+- Backend module files must NOT shadow the SDK package they import. E.g., the Groq backend lives in `groq_backend.py`, not `groq.py`, because `import groq` inside `groq.py` would resolve to itself instead of the installed SDK.
+
+### Response parsing
+- `parse_judgment_json()` in `backends/__init__.py` handles multiple response formats: direct JSON, Claude Code wrapped (`{"result": "..."}`), markdown-fenced JSON, and `<think>...</think>`-wrapped responses (from reasoning models like Qwen3).
+- The `<think>` stripping is a safety net — backends should disable thinking at the API level when possible (e.g., `reasoning_effort="none"` for Groq) to avoid wasting tokens.
+
+### Check scoping — each check is local
+- **line-to-function**: scoped to a single file. Can you sort lines to functions *within a file*?
+- **name-to-file**: scoped to a single folder (non-recursive). Can you sort names to files *within a folder*? Cross-folder sorting is not meaningful — different components can have similar concerns.
+- **file-to-folder**: scoped to the local neighborhood (parent, siblings, grandparent). Can you sort files to folders *among neighbors*?
+- This locality is intentional. Each check measures organizational quality at its level of the hierarchy, not global sortability.

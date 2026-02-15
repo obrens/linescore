@@ -1,69 +1,56 @@
-# Project Status — linescore v0.1.0
+# Project Status — linescore v0.2.0
 
 ## What we have
 
-A working MVP that scores Python code quality by "line identifiability" — how accurately an AI can guess which function a code statement belongs to, given only function names.
+A code quality scorer with three checks, four backends, chance-adjusted scoring, and LoC-weighted summaries. Scores Python code by testing whether an AI can identify where code elements belong in the project structure.
 
-**Architecture:** Library (`linescore/`) with pluggable parsers and judges, consumed by a thin CLI (`cli.py`). Installed via `pip install -e .`, invoked as `linescore <path>`.
+**Architecture:** Library (`linescore/`) with pluggable backends, checks, and languages, consumed by a thin CLI. Installed via `pip install -e .`, invoked as `linescore <path>`.
 
-**Components:**
-- `PythonParser` — AST-based extraction of functions and their statements, with filtering of trivial lines.
-- `ClaudeCodeJudge` — shells out to `claude` CLI, defaults to Haiku model.
-- `score_module()` — core scorer with parallel dispatch, progress callbacks.
-- `reporting.py` — convenience formatters (text table, JSON).
-- 34 unit tests, all passing. Tests use mock judges so they run instantly with no API cost.
+**Checks:**
+- `LineToFunctionCheck` — can the LLM guess which function a code statement belongs to?
+- `NameToFileCheck` — can the LLM guess which file a function/class name belongs to?
+- `FileToFolderCheck` — can the LLM guess which folder a file/subfolder belongs to? (neighborhood-scoped)
+
+**Backends:**
+- `ClaudeCodeBackend` — subprocess to `claude` CLI (default, zero deps)
+- `AnthropicBackend` — Anthropic Python SDK (`linescore install anthropic`)
+- `LlamaCppBackend` — local llama-cpp-python (`linescore install llamacpp`)
+- `GroqBackend` — Groq cloud API with Qwen3-32B (`linescore install groq`)
+
+**Scoring:**
+- Chance-adjusted scores: `(raw - 1/k) / (1 - 1/k)`, computed per-task to handle variable candidate set sizes
+- LoC-weighted summaries: overall score weighted by lines of code, not equal per-run
+- Single-category items (< 2 functions/files) score 0 instead of being excluded
+- Flat summary table shown after multi-run sessions
+
+**Tests:** 94 unit tests, all passing. Tests use mock backends (no API cost).
 
 ## What works well
 
-- The heuristic surfaces real signals. In the smoke test, it correctly identified that `judge_statement` and `process_func` get confused — they do similar subprocess/JSON work at the same abstraction level.
-- The per-function breakdown and confused-pairs output are immediately actionable.
-- The parser/judge protocol separation is clean. Adding a new language or AI backend means implementing one method.
-- Zero runtime dependencies. Just stdlib + `claude` on PATH.
+- The heuristic surfaces real signals about code organization quality.
+- `linescore .` runs all three checks on the current directory with recursive target discovery.
+- Adjusted scoring makes results comparable across targets with different numbers of categories.
+- LoC weighting ensures the overall score reflects the whole codebase proportionally.
+- Response parser handles multiple LLM output formats (direct JSON, Claude Code wrapped, markdown-fenced, thinking-wrapped).
 
 ## Known issues and limitations
 
-**Haiku might be too weak for this task.** The smoke test scored 20% on 5 statements, which is low even accounting for sample noise. Haiku may not have enough reasoning ability to reliably match statements to function names. Worth testing with Sonnet to see if the score difference is significant — if it is, the default model choice needs revisiting. The tradeoff is cost: a full run on a 150-statement file is 150 API calls.
+- **No API key setup guidance.** `linescore install anthropic` and `linescore install groq` install the SDK but don't help with API key configuration. Users get confusing errors from deep in the SDK when keys are missing.
+- **No caching.** Running the same file twice pays full API cost again.
+- **No hierarchical folder report.** The flat summary shows per-run scores but doesn't group by folder for drill-down. (Planned as Step 3b.)
+- **Python only.** No other language parsers yet.
+- **No benchmarks.** No reference scores from well-known repos to compare against. (Planned as Step 5.)
 
-**Statement filtering needs iteration.** The current filter removes obvious noise (pass, bare return, self.x = x) but lets through generic statements like `except json.JSONDecodeError:` that are inherently ambiguous. Being too aggressive with filtering risks hiding real problems (a function full of generic code *is* a signal), but some lines will always be unguessable. The right balance will emerge from running it on real codebases and looking at which wrong guesses are informative vs noise.
+## What changed since v0.1.0
 
-**Subprocess overhead is significant.** Each judgment spawns a `claude` process. For 150 statements at 10 workers, that's ~15 sequential batches of process spawns. A direct Anthropic API judge would be meaningfully faster and allow control over temperature, max tokens, etc.
-
-**No caching.** Running the same file twice pays full API cost again. For local dev use this is annoying; for CI it would be wasteful.
-
-**Single-file scoring only.** The tool scores one module at a time. Cross-module analysis (e.g. "these two files have overlapping responsibilities") is out of scope, but aggregating per-file scores across a project is a natural next step for the CLI.
-
-## Potential next steps
-
-### High priority (making it actually useful day-to-day)
-
-1. **Test with Sonnet vs Haiku** — Run the same file with both models and compare scores. If Haiku is too noisy, either default to Sonnet or make the model easily configurable.
-
-2. **Direct API judge** — Implement `AnthropicApiJudge` using the `anthropic` Python SDK. Eliminates subprocess overhead, gives control over model/temperature/tokens, and enables batching. This would be noticeably faster and cheaper.
-
-3. **Result caching** — Cache judgments keyed on (statement, function_names_hash, model). Skip re-judging unchanged statements. This makes re-runs on slightly modified files near-instant.
-
-4. **Prompt tuning** — The current prompt is basic. Experiment with: telling the AI the language explicitly, giving it permission to say "ambiguous" instead of guessing randomly, adjusting confidence calibration. Small prompt changes could significantly affect score quality.
-
-### Medium priority (making it practical for teams)
-
-5. **Multi-file summary** — When run on a directory, print an aggregate summary (worst files, average score, total stats) after individual reports.
-
-6. **Config file** — A `.linescore.toml` or similar that sets defaults (model, workers, max-statements, exclude patterns) per project. Avoids typing flags every time.
-
-7. **Threshold / exit code** — `--threshold 0.5` that returns exit code 1 if any file scores below. Enables CI gating.
-
-8. **Git diff mode** — Only score files changed since a given ref. `linescore --diff main` to score only what's in your PR.
-
-### Lower priority (extending the concept)
-
-9. **Other language parsers** — TypeScript/JavaScript would be the highest-value next language. Java/Kotlin after that.
-
-10. **Other judge backends** — OpenAI, local models (for teams that can't use Anthropic), etc.
-
-11. **Confidence-weighted scoring** — Instead of raw accuracy, weight by the AI's confidence. A high-confidence wrong guess is worse than a low-confidence one. This could be a more nuanced metric.
-
-12. **Historical tracking** — Store scores over time to show trends. "This module's score dropped from 72% to 58% in the last month."
-
-## Naming
-
-The package is called `linescore`.
+- Added `AnthropicBackend`, `LlamaCppBackend`, `GroqBackend`
+- Added `NameToFileCheck` and `FileToFolderCheck` (was line-to-function only)
+- Added `Language` protocol; unified language-specific behavior in `PythonLanguage`
+- Rewrote scorer with per-task chance-adjusted scoring
+- Added `--check all` (new default) with recursive directory walking
+- File-to-folder narrowed to local neighborhood (parent, siblings, grandparent)
+- Added LoC-weighted flat summary
+- Single-category items score 0 instead of being skipped
+- Groq backend: disabled Qwen3 thinking mode (`reasoning_effort="none"`)
+- Parser: handles `<think>...</think>` blocks from reasoning models
+- Tests: 34 → 94
